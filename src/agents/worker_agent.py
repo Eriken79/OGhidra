@@ -417,6 +417,7 @@ class WorkerAgent:
 
                     # Artifact scanning — detect security patterns in results
                     from src.artifact_scanner import scan_for_artifacts
+                    print("scanning for artifacts")
                     artifacts = scan_for_artifacts(result_str)
                     if artifacts:
                         self._promote_scan_artifacts_to_notebook(
