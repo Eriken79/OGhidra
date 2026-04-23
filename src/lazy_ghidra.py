@@ -11,13 +11,15 @@ import threading
 logger = logging.getLogger(__name__)
 
 # Attributes that belong to the proxy itself — never forwarded.
-_PROXY_ATTRS = frozenset({
-    "_ghidra_cls",
-    "_init_kwargs",
-    "_real_client",
-    "_init_lock",
-    "_initialized",
-})
+_PROXY_ATTRS = frozenset(
+    {
+        "_ghidra_cls",
+        "_init_kwargs",
+        "_real_client",
+        "_init_lock",
+        "_initialized",
+    }
+)
 
 
 class LazyGhidraClient:
@@ -60,9 +62,7 @@ class LazyGhidraClient:
                 object.__setattr__(self, "_initialized", True)
                 logger.info("[LazyGhidraClient] Connection established.")
             except Exception as exc:
-                logger.error(
-                    "[LazyGhidraClient] Failed to connect to Ghidra: %s", exc
-                )
+                logger.error("[LazyGhidraClient] Failed to connect to Ghidra: %s", exc)
                 raise ConnectionError(
                     f"Ghidra connection failed on first use: {exc}"
                 ) from exc
@@ -91,3 +91,20 @@ class LazyGhidraClient:
         if self._initialized:
             return f"<LazyGhidraClient connected={True} client={self._real_client!r}>"
         return f"<LazyGhidraClient connected={False} pending>"
+
+    def __dir__(self):
+        names = set(super().__dir__())
+        if self._initialized and self._real_client is not None:
+            names.update(dir(self._real_client))
+        else:
+            names.update(dir(self._ghidra_cls))
+        return sorted(names)
+
+    # Optional lifecycle hook so backends like PyGhidraClient can release
+    # resources (projects/programs) when the application shuts down.
+    def close(self):
+        if self._initialized and hasattr(self._real_client, "close"):
+            try:
+                self._real_client.close()
+            except Exception:
+                logger.exception("Error while closing underlying Ghidra client")
