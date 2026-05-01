@@ -21,13 +21,7 @@ from src.config import BridgeConfig
 from src.ollama_client import OllamaClient
 from src.external_client import ExternalClient
 from src.custom_api_client import CustomAPIClient
-from src.ghidra_client import GhidraMCPClient, AbstractGhidraClient
-
-try:
-    # Optional backend; only needed when using the pyGhidra mode.
-    from src.ghidra_client import PyGhidraClient
-except Exception:  # pragma: no cover - pyGhidra optional
-    PyGhidraClient = None  # type: ignore
+from src.ghidra_client import GhidraMCPClient, AbstractGhidraClient, PyGhidraClient
 from src.command_parser import CommandParser
 from src.cag.manager import CAGManager
 from src import config

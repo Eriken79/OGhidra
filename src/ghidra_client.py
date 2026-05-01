@@ -78,9 +78,9 @@ class AbstractGhidraClient(ABC):
             logger.error(error_msg)
             return error_msg
 
-
-class GhidraMCPClient(AbstractGhidraClient):
-    """HTTP-based client for interacting with GhidraMCP API."""
+    # ------------------------------------------------------------------
+    # Shared helpers and backend-agnostic high-level tool surface
+    # ------------------------------------------------------------------
 
     # Safe limit enforcement for bulk operations to prevent context overflow
     MAX_SAFE_LIMIT = 20
@@ -112,165 +112,6 @@ class GhidraMCPClient(AbstractGhidraClient):
             f"Invalid {param_name} type={type(value).__name__}; using default={default}"
         )
         return default
-
-    def __init__(self, config: GhidraMCPConfig, ollama_client=None):
-        """
-        Initialize the GhidraMCP client.
-
-        Args:
-            config: GhidraMCPConfig object with connection details
-            ollama_client: Optional OllamaClient for AI-powered analysis
-        """
-        super().__init__(config=config, ollama_client=ollama_client)
-        self.client = httpx.Client(timeout=config.timeout)
-        self.api_version = None
-
-        # Instance management
-        self.active_instances = {}  # port -> info_dict
-        self.current_instance_port = None
-
-        # Parse default port from config.base_url
-        try:
-            parsed = urlparse(str(config.base_url))
-            if parsed.port:
-                self.default_port = parsed.port
-                # We'll set this as active initially, but verify it later
-                self.current_instance_port = self.default_port
-                self.active_instances[self.default_port] = {
-                    "url": str(config.base_url).rstrip("/")
-                }
-            else:
-                self.default_port = 8080
-                self.current_instance_port = 8080
-        except Exception:
-            self.default_port = 8080
-            self.current_instance_port = 8080
-
-        # Thread-safety: serialize all HTTP requests for future parallel workers
-        self._request_lock = threading.Lock()
-
-        logger.info(f"Initialized GhidraMCP client at: {config.base_url}")
-
-        # Try to detect API version and available endpoints
-        self._detect_api()
-
-        # Auto-discover other instances on startup
-        try:
-            self.instances_list()
-        except AttributeError:
-            # Methods might not be added yet if doing partial update
-            pass
-
-    def _detect_api(self):
-        """Detect the API version and available endpoints."""
-        try:
-            # Try to get available methods
-            response = self.safe_get("methods", {"offset": 0, "limit": 1})
-            # Check if response is valid (list of strings, not error strings)
-            if (
-                response
-                and isinstance(response, list)
-                and not (
-                    response
-                    and (
-                        response[0].startswith("Error")
-                        or response[0].startswith("Request failed")
-                    )
-                )
-            ):
-                logger.info("Successfully connected to GhidraMCP API")
-                # Update info for current instance
-                if self.current_instance_port:
-                    self._update_instance_info(self.current_instance_port)
-            else:
-                logger.warning(f"Failed to connect to GhidraMCP API: {response}")
-        except Exception as e:
-            logger.warning(f"Error detecting API: {str(e)}")
-
-    def _get_base_url(self) -> str:
-        """Get the base URL for the current active instance."""
-        if (
-            self.current_instance_port
-            and self.current_instance_port in self.active_instances
-        ):
-            return self.active_instances[self.current_instance_port]["url"]
-        return str(self.config.base_url).rstrip("/")
-
-    def _raw_get(self, endpoint: str, params: Dict[str, Any] | None = None) -> str:
-        """HTTP implementation of the low-level GET hook.
-
-        Returns the raw response text. Non-200 responses are converted to a
-        single-line error string so that :meth:`safe_get` still yields a list
-        with an ``"Error ..."`` entry, matching the previous behaviour.
-        """
-        if params is None:
-            params = {}
-
-        base_url = self._get_base_url()
-        endpoint = endpoint.lstrip("/")
-        url = f"{base_url}/{endpoint}"
-
-        with self._request_lock:
-            response = self.client.get(url, params=params, timeout=self.config.timeout)
-
-        response.encoding = "utf-8"
-        if response.status_code == 200:
-            return response.text
-        return f"Error {response.status_code}: {response.text.strip()}"
-
-    def _raw_post(self, endpoint: str, data: Dict[str, Any] | str) -> str:
-        """HTTP implementation of the low-level POST hook."""
-        base_url = self._get_base_url()
-        endpoint = endpoint.lstrip("/")
-        url = f"{base_url}/{endpoint}"
-
-        with self._request_lock:
-            if isinstance(data, dict):
-                response = self.client.post(url, data=data, timeout=self.config.timeout)
-            else:
-                response = self.client.post(
-                    url, data=data.encode("utf-8"), timeout=self.config.timeout
-                )
-
-        response.encoding = "utf-8"
-        if response.status_code == 200:
-            return response.text.strip()
-        return f"Error {response.status_code}: {response.text.strip()}"
-
-    def health_check(self) -> bool:
-        """
-        Check if the GhidraMCP server is available.
-
-        Returns:
-            True if the server is available, False otherwise
-        """
-        try:
-            response = self.safe_get("methods", {"offset": 0, "limit": 1})
-            return response and not response[0].startswith("Error")
-        except Exception as e:
-            logger.error(f"GhidraMCP server health check failed: {str(e)}")
-            return False
-
-    def check_health(self) -> bool:
-        """
-        Check if the GhidraMCP server is reachable and responding.
-
-        Returns:
-            True if GhidraMCP is healthy, False otherwise
-        """
-        try:
-            # Use the same URL construction pattern as other methods
-            base_url = self._get_base_url()
-            url = f"{base_url}/methods"
-
-            response = self.client.get(url, params={"offset": 0, "limit": 1})
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            logger.error(f"GhidraMCP health check failed: {str(e)}")
-            return False
-
-    # Implement GhidraMCP API methods
 
     def list_methods(self, offset: int = 0, limit: int = 100) -> List[str]:
         """
@@ -582,12 +423,12 @@ class GhidraMCPClient(AbstractGhidraClient):
         # so we can safely allow larger limits without context overflow risk
         # MAX_SAFE_LIMIT is primarily for operations that return large content
         # Increased limit to support large binaries with 3000+ functions
-        MAX_FUNCTIONS_LIMIT = 10000  # Allow pagination up to 10K functions per request
-        if limit > MAX_FUNCTIONS_LIMIT:
+        max_functions_limit = 10000  # Allow pagination up to 10K functions per request
+        if limit > max_functions_limit:
             logger.warning(
-                f"list_functions limit {limit} exceeds MAX_FUNCTIONS_LIMIT={MAX_FUNCTIONS_LIMIT}. Capping to MAX_FUNCTIONS_LIMIT."
+                f"list_functions limit {limit} exceeds MAX_FUNCTIONS_LIMIT={max_functions_limit}. Capping to MAX_FUNCTIONS_LIMIT."
             )
-            limit = MAX_FUNCTIONS_LIMIT
+            limit = max_functions_limit
 
         return self.safe_get("list_functions", {"offset": offset, "limit": limit})
 
@@ -896,21 +737,12 @@ class GhidraMCPClient(AbstractGhidraClient):
         )
 
     # ------------------------------------------------------------------
-    # 🔄 Address helper & cross-reference endpoints (extended)
+    # Address helper and cross-reference endpoints
     # ------------------------------------------------------------------
 
     @staticmethod
     def _normalize_addr(identifier: str) -> str:
-        """Return canonical hexadecimal address **without** any "0x" prefix, lower-cased.
-
-        Accepts typical variants such as:
-        • "0x401000"
-        • "401000"
-        • "FUN_401000" / "thunk_FUN_401000"
-
-        and converts them to "401000" which is the address format required by
-        most GhidraMCP endpoints (all lowercase, no prefix).
-        """
+        """Return canonical hexadecimal address without any '0x' prefix, lower-cased."""
 
         if not identifier:
             return ""
@@ -926,8 +758,6 @@ class GhidraMCPClient(AbstractGhidraClient):
             return identifier[2:].lower()
 
         # Extract the first long hex substring (6+ chars)
-        import re
-
         m = re.search(r"([0-9a-fA-F]{6,})", identifier)
         if m:
             return m.group(1).lower()
@@ -935,28 +765,24 @@ class GhidraMCPClient(AbstractGhidraClient):
         # Fallback: return as-is (may produce server error, but avoids crash)
         return identifier
 
-    # -- incoming xrefs
     def get_xrefs_to(self, address: str, offset: int = 0, limit: int = 100):
-        """List all x-refs *to* `address`. Returns list/str depending on API."""
+        """List all x-refs to `address`. Returns list/str depending on API."""
         norm_addr = self._normalize_addr(address)
         lines = self.safe_get(
             "xrefs_to", {"address": norm_addr, "offset": offset, "limit": limit}
         )
         return lines
 
-    # -- outgoing xrefs
     def get_xrefs_from(self, address: str, offset: int = 0, limit: int = 100):
-        """List all x-refs *from* `address`."""
+        """List all x-refs from `address`."""
         norm_addr = self._normalize_addr(address)
         lines = self.safe_get(
             "xrefs_from", {"address": norm_addr, "offset": offset, "limit": limit}
         )
         return lines
 
-    # -- name-based helper
     def get_function_xrefs(self, name: str, offset: int = 0, limit: int = 100):
-        """List x-refs to a function by `name`. If an address is mistakenly passed,
-        we treat it as address form and call get_xrefs_to instead."""
+        """List x-refs to a function by `name`."""
         # Detect address-like input
         if (
             name.upper().startswith("0X")
@@ -971,10 +797,6 @@ class GhidraMCPClient(AbstractGhidraClient):
             "function_xrefs", {"name": name, "offset": offset, "limit": limit}
         )
         return lines
-
-    # ------------------------------------------------------------------
-    # Raw byte reading capability
-    # ------------------------------------------------------------------
 
     def read_bytes(self, address: str, length: int = 16, format: str = "hex") -> str:
         """
@@ -1356,6 +1178,167 @@ class GhidraMCPClient(AbstractGhidraClient):
 
         return "\n".join(lines)
 
+
+class GhidraMCPClient(AbstractGhidraClient):
+    """HTTP-based client for interacting with GhidraMCP API."""
+
+    def __init__(self, config: GhidraMCPConfig, ollama_client=None):
+        """
+        Initialize the GhidraMCP client.
+
+        Args:
+            config: GhidraMCPConfig object with connection details
+            ollama_client: Optional OllamaClient for AI-powered analysis
+        """
+        super().__init__(config=config, ollama_client=ollama_client)
+        self.client = httpx.Client(timeout=config.timeout)
+        self.api_version = None
+
+        # Instance management
+        self.active_instances = {}  # port -> info_dict
+        self.current_instance_port = None
+
+        # Parse default port from config.base_url
+        try:
+            parsed = urlparse(str(config.base_url))
+            if parsed.port:
+                self.default_port = parsed.port
+                # We'll set this as active initially, but verify it later
+                self.current_instance_port = self.default_port
+                self.active_instances[self.default_port] = {
+                    "url": str(config.base_url).rstrip("/")
+                }
+            else:
+                self.default_port = 8080
+                self.current_instance_port = 8080
+        except Exception:
+            self.default_port = 8080
+            self.current_instance_port = 8080
+
+        # Thread-safety: serialize all HTTP requests for future parallel workers
+        self._request_lock = threading.Lock()
+
+        logger.info(f"Initialized GhidraMCP client at: {config.base_url}")
+
+        # Try to detect API version and available endpoints
+        self._detect_api()
+
+        # Auto-discover other instances on startup
+        try:
+            self.instances_list()
+        except AttributeError:
+            # Methods might not be added yet if doing partial update
+            pass
+
+    def _detect_api(self):
+        """Detect the API version and available endpoints."""
+        try:
+            # Try to get available methods
+            response = self.safe_get("methods", {"offset": 0, "limit": 1})
+            # Check if response is valid (list of strings, not error strings)
+            if (
+                response
+                and isinstance(response, list)
+                and not (
+                    response
+                    and (
+                        response[0].startswith("Error")
+                        or response[0].startswith("Request failed")
+                    )
+                )
+            ):
+                logger.info("Successfully connected to GhidraMCP API")
+                # Update info for current instance
+                if self.current_instance_port:
+                    self._update_instance_info(self.current_instance_port)
+            else:
+                logger.warning(f"Failed to connect to GhidraMCP API: {response}")
+        except Exception as e:
+            logger.warning(f"Error detecting API: {str(e)}")
+
+    def _get_base_url(self) -> str:
+        """Get the base URL for the current active instance."""
+        if (
+            self.current_instance_port
+            and self.current_instance_port in self.active_instances
+        ):
+            return self.active_instances[self.current_instance_port]["url"]
+        return str(self.config.base_url).rstrip("/")
+
+    def _raw_get(self, endpoint: str, params: Dict[str, Any] | None = None) -> str:
+        """HTTP implementation of the low-level GET hook.
+
+        Returns the raw response text. Non-200 responses are converted to a
+        single-line error string so that :meth:`safe_get` still yields a list
+        with an ``"Error ..."`` entry, matching the previous behaviour.
+        """
+        if params is None:
+            params = {}
+
+        base_url = self._get_base_url()
+        endpoint = endpoint.lstrip("/")
+        url = f"{base_url}/{endpoint}"
+
+        with self._request_lock:
+            response = self.client.get(url, params=params, timeout=self.config.timeout)
+
+        response.encoding = "utf-8"
+        if response.status_code == 200:
+            return response.text
+        return f"Error {response.status_code}: {response.text.strip()}"
+
+    def _raw_post(self, endpoint: str, data: Dict[str, Any] | str) -> str:
+        """HTTP implementation of the low-level POST hook."""
+        base_url = self._get_base_url()
+        endpoint = endpoint.lstrip("/")
+        url = f"{base_url}/{endpoint}"
+
+        with self._request_lock:
+            if isinstance(data, dict):
+                response = self.client.post(url, data=data, timeout=self.config.timeout)
+            else:
+                response = self.client.post(
+                    url, data=data.encode("utf-8"), timeout=self.config.timeout
+                )
+
+        response.encoding = "utf-8"
+        if response.status_code == 200:
+            return response.text.strip()
+        return f"Error {response.status_code}: {response.text.strip()}"
+
+    def health_check(self) -> bool:
+        """
+        Check if the GhidraMCP server is available.
+
+        Returns:
+            True if the server is available, False otherwise
+        """
+        try:
+            response = self.safe_get("methods", {"offset": 0, "limit": 1})
+            return response and not response[0].startswith("Error")
+        except Exception as e:
+            logger.error(f"GhidraMCP server health check failed: {str(e)}")
+            return False
+
+    def check_health(self) -> bool:
+        """
+        Check if the GhidraMCP server is reachable and responding.
+
+        Returns:
+            True if GhidraMCP is healthy, False otherwise
+        """
+        try:
+            # Use the same URL construction pattern as other methods
+            base_url = self._get_base_url()
+            url = f"{base_url}/methods"
+
+            response = self.client.get(url, params={"offset": 0, "limit": 1})
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.error(f"GhidraMCP health check failed: {str(e)}")
+            return False
+
     # =========================================================================
     # Instance Management
     #
@@ -1572,9 +1555,10 @@ class GhidraMCPClient(AbstractGhidraClient):
 class PyGhidraClient(GhidraMCPClient):
     """pyGhidra-backed implementation of the Ghidra client.
 
-    This reuses the higher-level tool surface from :class:`GhidraMCPClient`
-    but replaces the HTTP transport with an in-process pyGhidra integration
-    by overriding the low-level ``_raw_get`` / ``_raw_post`` hooks.
+    This reuses the higher-level tool surface from :class:`AbstractGhidraClient`
+    while keeping the existing dispatch model, replacing the HTTP transport
+    with an in-process pyGhidra integration by overriding the low-level
+    ``_raw_get`` / ``_raw_post`` hooks.
 
     NOTE: This implementation is intentionally conservative and focuses on
     wiring and structure. The exact pyGhidra APIs and project/program

@@ -1830,14 +1830,6 @@ class GhidraMCPConfig(BaseModel):
         ),
         env="PYGHIDRA_BINARY",
     )
-    pyghidra_projects_dir: str | None = Field(
-        default=None,
-        description=(
-            "Base directory for pyGhidra-created projects when using --pyghidra-binary. "
-            "If not set, defaults to 'pyghidra_projects' under the current working directory."
-        ),
-        env="PYGHIDRA_PROJECTS_DIR",
-    )
 
     @validator("api_path")
     def validate_api_path(cls, v):
@@ -2257,13 +2249,6 @@ def get_config() -> BridgeConfig:
             if "ghidra" not in config_data:
                 config_data["ghidra"] = {}
             config_data["ghidra"]["pyghidra_binary"] = os.getenv("PYGHIDRA_BINARY")
-
-        if os.getenv("PYGHIDRA_PROJECTS_DIR"):
-            if "ghidra" not in config_data:
-                config_data["ghidra"] = {}
-            config_data["ghidra"]["pyghidra_projects_dir"] = os.getenv(
-                "PYGHIDRA_PROJECTS_DIR"
-            )
 
         # Load LLM Provider
         if os.getenv("LLM_PROVIDER"):

@@ -1762,16 +1762,6 @@ def main():
         ),
     )
 
-    parser.add_argument(
-        "--pyghidra-projects-dir",
-        type=str,
-        default=None,
-        help=(
-            "Base directory to store pyGhidra-created projects in binary mode. "
-            "If not set, defaults to './pyghidra_projects' under the current working directory."
-        ),
-    )
-
     # Capabilities list is now included by default; provide opt-out flag instead
     parser.add_argument(
         "--no-capabilities",
