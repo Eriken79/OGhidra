@@ -14,9 +14,8 @@ load_dotenv(override=True)
 
 # Import after loading environment variables
 from src.config import get_config, BridgeConfig
-from src.bridge import Bridge
+from src.bridge import Bridge, select_ghidra_client_class
 from src.ollama_client import OllamaClient
-from src.ghidra_client import GhidraMCPClient
 
 
 def print_header():
@@ -44,9 +43,8 @@ def print_header():
 
 def run_interactive_mode(bridge: Bridge, config: BridgeConfig):
     """Run the bridge in interactive mode."""
-    ghidra_backend_label = (
-        "pyGhidra" if getattr(config.ghidra, "backend", "http") == "pyghidra" else "GhidraMCP"
-    )
+    is_pyghidra_backend = getattr(config.ghidra, "backend", "http") == "pyghidra"
+    ghidra_backend_label = "pyGhidra" if is_pyghidra_backend else "GhidraMCP"
     print("Ollama-GhidraMCP Bridge (Interactive Mode)")
     print(
         f"Default model: {bridge.ollama.config.model if hasattr(bridge, 'ollama') and hasattr(bridge.ollama, 'config') else config.ollama.model}"
@@ -55,6 +53,56 @@ def run_interactive_mode(bridge: Bridge, config: BridgeConfig):
 
     # Initialize a list to store outputs from the current session for review
     current_session_log = []
+
+    def _normalize_function_lines(raw_result):
+        if isinstance(raw_result, list):
+            raw_lines = [str(line).strip() for line in raw_result if str(line).strip()]
+        elif isinstance(raw_result, str):
+            raw_lines = [line.strip() for line in raw_result.splitlines() if line.strip()]
+        else:
+            return [], f"Error: Unexpected function list format: {type(raw_result).__name__}"
+
+        if raw_lines and raw_lines[0].lower().startswith(("error", "request failed")):
+            return [], raw_lines[0]
+
+        filtered_lines = [
+            line
+            for line in raw_lines
+            if not line.startswith("[")
+            and not line.startswith("=")
+            and not line.startswith("-")
+            and not line.lower().startswith(("error", "request failed"))
+        ]
+        has_more = any("[Next:" in line for line in raw_lines)
+        return filtered_lines, has_more
+
+    def _collect_all_functions():
+        all_functions = []
+        offset = 0
+        limit = 200
+
+        while True:
+            functions_result = (
+                bridge.ghidra.list_functions(offset=offset, limit=limit)
+                if hasattr(bridge, "ghidra")
+                else []
+            )
+
+            batch, status = _normalize_function_lines(functions_result)
+            if isinstance(status, str):
+                return status
+
+            if not batch:
+                break
+
+            all_functions.extend(batch)
+
+            if not status:
+                break
+
+            offset += limit
+
+        return all_functions
 
     while True:
         try:
@@ -228,7 +276,7 @@ def run_interactive_mode(bridge: Bridge, config: BridgeConfig):
                     client = (
                         bridge.ghidra
                         if hasattr(bridge, "ghidra")
-                        else GhidraMCPClient(config.ghidra)
+                        else select_ghidra_client_class(config)[0](config.ghidra)
                     )  # Fallback if bridge.ghidra not init
 
                     # Get all public methods (excluding those starting with _ and known non-tools)
@@ -361,7 +409,9 @@ def run_interactive_mode(bridge: Bridge, config: BridgeConfig):
                 )
                 print("\nAnalysis Commands:")
                 print(
-                    "  analyze-function [address]        - Analyze current function or specified address"
+                    "  analyze-function <address>        - Analyze the specified function address"
+                    if is_pyghidra_backend
+                    else "  analyze-function [address]        - Analyze current function or specified address"
                 )
                 print(
                     "  enumerate-binary                  - Full enumeration: analyze + rename all functions, load vectors"
@@ -720,6 +770,13 @@ Tool Output:
                         if address_part:  # Ensure address_part is not empty
                             address = address_part
 
+                    if is_pyghidra_backend and not address:
+                        print(
+                            "\nThe pyGhidra backend does not track the live Ghidra GUI selection."
+                        )
+                        print("Use: analyze-function 0x401000\n")
+                        continue
+
                     params_for_log = f"address={repr(address)}" if address else ""
                     print(
                         f"\nExecuting: analyze_function({f'address=\\"{address}\\"' if address else ''})"
@@ -870,35 +927,13 @@ Tool Output:
 
                     # Step 1: Get all functions
                     print("\n[Step 1] Getting function list...")
-                    functions_result = (
-                        bridge.ghidra.list_functions()
-                        if hasattr(bridge, "ghidra")
-                        else []
-                    )
+                    functions_result = _collect_all_functions()
 
-                    if isinstance(
-                        functions_result, str
-                    ) and functions_result.lower().startswith("error:"):
+                    if isinstance(functions_result, str):
                         print(f"Error getting functions: {functions_result}")
                         continue
 
-                    # Parse function list
-                    valid_functions = []
-                    if isinstance(functions_result, list):
-                        valid_functions = functions_result
-                    elif isinstance(functions_result, str):
-                        import re
-
-                        # Parse format: "FUN_00401000 at 00401000"
-                        function_lines = functions_result.strip().split("\n")
-                        for line in function_lines:
-                            line = line.strip()
-                            if (
-                                line
-                                and not line.startswith("=")
-                                and not line.startswith("-")
-                            ):
-                                valid_functions.append(line)
+                    valid_functions = functions_result
 
                     if not valid_functions:
                         print("No functions found to enumerate.")

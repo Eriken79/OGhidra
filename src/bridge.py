@@ -72,6 +72,22 @@ def setup_logging(config):
     return logging.getLogger("ollama-ghidra-bridge")
 
 
+def select_ghidra_client_class(
+    config: BridgeConfig,
+) -> tuple[type[AbstractGhidraClient], str]:
+    """Return the configured Ghidra backend class and a short label."""
+    backend = getattr(config.ghidra, "backend", "http")
+    if backend == "pyghidra":
+        if PyGhidraClient is None:
+            raise RuntimeError(
+                "Ghidra backend 'pyghidra' selected but PyGhidraClient is not available. "
+                "Ensure pyghidra is installed and importable."
+            )
+        return PyGhidraClient, "pyGhidra"
+
+    return GhidraMCPClient, "HTTP GhidraMCP"
+
+
 class Bridge:
     """Main bridge class that connects Ollama with GhidraMCP."""
 
@@ -122,19 +138,8 @@ class Bridge:
 
         # Select Ghidra backend class based on configuration. Default is HTTP
         # GhidraMCP server; "pyghidra" uses an in-process pyGhidra client.
-        backend = getattr(config.ghidra, "backend", "http")
-        ghidra_cls: type[AbstractGhidraClient]
-        if backend == "pyghidra":
-            if PyGhidraClient is None:
-                raise RuntimeError(
-                    "Ghidra backend 'pyghidra' selected but PyGhidraClient is not available. "
-                    "Ensure pyghidra is installed and importable."
-                )
-            ghidra_cls = PyGhidraClient  # type: ignore[assignment]
-            self.logger.info("Using pyGhidra backend for Ghidra integration")
-        else:
-            ghidra_cls = GhidraMCPClient
-            self.logger.info("Using HTTP GhidraMCP backend for Ghidra integration")
+        ghidra_cls, backend_label = select_ghidra_client_class(config)
+        self.logger.info("Using %s backend for Ghidra integration", backend_label)
 
         self.ghidra_client = LazyGhidraClient(
             ghidra_cls,
@@ -5228,7 +5233,8 @@ def main():
 
     # Initialize clients
     ollama_client = OllamaClient(config.ollama)
-    ghidra_client = GhidraMCPClient(config.ghidra)
+    ghidra_cls, _backend_label = select_ghidra_client_class(config)
+    ghidra_client = ghidra_cls(config.ghidra)
 
     # List models if requested
     if args.list_models:
