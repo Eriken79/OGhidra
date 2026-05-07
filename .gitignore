@@ -34,7 +34,7 @@ logs/
 # IDEs
 .vscode/
 .idea/
-.codex/
+.codex
 *.swp
 *.swo
 
@@ -53,3 +53,7 @@ OGhidraMCP/out/
 # Local data
 data/
 benchmark/results/
+
+# Python Venv
+oghidra_venv/
+oghidra_venv_wsl/

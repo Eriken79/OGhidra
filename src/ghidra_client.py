@@ -1544,6 +1544,9 @@ class PyGhidraClient(AbstractGhidraClient):
         self._program_ctx = None
         self._program_consumer = None
         self._open_program_cm = None
+        self._DefinedStringIterator = None
+        self._defined_string_iterator_warning_emitted = False
+        self._use_defined_string_iterator = True
 
         self._init_pyghidra()
 
@@ -1684,8 +1687,18 @@ class PyGhidraClient(AbstractGhidraClient):
 
         self._pyghidra = pyghidra
 
-        # import ghidra DefinedStringIterator to decrease runtime for tool calls
-        from ghidra.program.util import DefinedStringIterator
+        # Prefer Ghidra's native string iterator to avoid the Python/JVM
+        # boundary cost of repeatedly calling DataType helpers in a Python loop.
+        try:
+            from ghidra.program.util import DefinedStringIterator
+        except Exception as exc:
+            self._warn_slow_string_path(
+                "DefinedStringIterator unavailable in this pyGhidra environment; "
+                "list_strings() will use the slower listing scan across the "
+                "Python/JVM boundary and performance may suffer",
+                exc,
+            )
+            DefinedStringIterator = None
         self._DefinedStringIterator = DefinedStringIterator
 
         binary_path = getattr(self.config, "pyghidra_binary", None)
@@ -2207,6 +2220,80 @@ class PyGhidraClient(AbstractGhidraClient):
 
         return self._render_paginated_lines(lines, offset, limit)
 
+    def _warn_slow_string_path(
+        self, message: str, exc: Exception | None = None
+    ) -> None:
+        """Emit a one-time error when list_strings() must use the slow path."""
+        if getattr(self, "_defined_string_iterator_warning_emitted", False):
+            return
+
+        self._defined_string_iterator_warning_emitted = True
+        if exc is None:
+            logger.error("%s", message)
+        else:
+            logger.error("%s: %s", message, exc)
+
+    def _get_defined_string_iterator(self, program):
+        """Return the fast Ghidra string iterator when it is usable."""
+        iterator_cls = getattr(self, "_DefinedStringIterator", None)
+        if iterator_cls is None:
+            self._warn_slow_string_path(
+                "DefinedStringIterator unavailable in this pyGhidra environment; "
+                "list_strings() is using the slower listing scan across the "
+                "Python/JVM boundary and performance may suffer"
+            )
+            return None
+
+        if not getattr(self, "_use_defined_string_iterator", True):
+            return None
+
+        try:
+            return iterator_cls.forProgram(program)
+        except Exception as exc:
+            self._use_defined_string_iterator = False
+            self._warn_slow_string_path(
+                "DefinedStringIterator failed during list_strings(); falling back "
+                "to the slower listing scan across the Python/JVM boundary and "
+                "performance may suffer",
+                exc,
+            )
+            return None
+
+    def _iter_string_entries(self, program=None):
+        """Yield string-like entries via the slow fallback listing scan."""
+        if program is None:
+            program = self._require_program()
+        listing = program.getListing()
+        for data in listing.getDefinedData(True):
+            try:
+                dt_name = str(data.getDataType().getDisplayName()).lower()
+                if "string" in dt_name or "unicode" in dt_name or "char" in dt_name:
+                    yield data
+            except Exception:
+                continue
+
+    @staticmethod
+    def _string_entry_value(entry) -> str:
+        """Normalize string entry objects from multiple Ghidra iterators."""
+        if hasattr(entry, "value"):
+            value = entry.value
+        elif hasattr(entry, "getValue"):
+            value = entry.getValue()
+        else:
+            value = None
+        return "" if value is None else str(value)
+
+    @staticmethod
+    def _string_entry_address(entry):
+        """Normalize address extraction across iterator entry shapes."""
+        if hasattr(entry, "minAddress"):
+            return entry.minAddress
+        if hasattr(entry, "getMinAddress"):
+            return entry.getMinAddress()
+        if hasattr(entry, "getAddress"):
+            return entry.getAddress()
+        return ""
+
     def list_methods(self, offset: int = 0, limit: int = 100) -> List[str]:
         try:
             offset, limit = self._get_offset_limit(offset, limit)
@@ -2480,14 +2567,24 @@ class PyGhidraClient(AbstractGhidraClient):
             limit = max_limit
 
         try:
-            data_iter = self._DefinedStringIterator.forProgram(self._program)
+            program = self._require_program()
             strings = []
-            for d in data_iter:
-                s = d.value
-                if filter and filter not in s:
-                   continue
-                addr = d.minAddress
-                strings.append(f"{addr}: {s}")
+            data_iter = self._get_defined_string_iterator(program)
+            if data_iter is not None:
+                for entry in data_iter:
+                    value = entry.value
+                    if value is None:
+                        value = ""
+                    if filter and filter not in value:
+                        continue
+                    strings.append(f"{entry.minAddress}: {value}")
+            else:
+                for entry in self._iter_string_entries(program):
+                    value = self._string_entry_value(entry)
+                    if filter and filter not in value:
+                        continue
+                    addr = self._string_entry_address(entry)
+                    strings.append(f"{addr}: {value}")
             return self._render_paginated_lines(strings, offset, limit)
         except Exception as exc:
             return self._operation_error_lines("list_strings", exc)
