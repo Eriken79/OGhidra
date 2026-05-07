@@ -1684,6 +1684,10 @@ class PyGhidraClient(AbstractGhidraClient):
 
         self._pyghidra = pyghidra
 
+        # import ghidra DefinedStringIterator to decrease runtime for tool calls
+        from ghidra.program.util import DefinedStringIterator
+        self._DefinedStringIterator = DefinedStringIterator
+
         binary_path = getattr(self.config, "pyghidra_binary", None)
         project_path = getattr(self.config, "pyghidra_project_path", None)
         program_name = getattr(self.config, "pyghidra_program", None)
@@ -2454,7 +2458,7 @@ class PyGhidraClient(AbstractGhidraClient):
             return self._render_paginated_lines(lines, offset, limit)
         except Exception as exc:
             return self._operation_error_lines("list_data_items", exc)
-
+    
     def list_strings(
         self, offset: int = 0, limit: int = 100, filter: str | None = None
     ) -> List[str]:
@@ -2476,26 +2480,14 @@ class PyGhidraClient(AbstractGhidraClient):
             limit = max_limit
 
         try:
-            program = self._require_program()
-            listing = program.getListing()
-            filter_text = filter.casefold() if filter else ""
-            strings: List[str] = []
-            for data in listing.getDefinedData(True):
-                try:
-                    dt_name = str(data.getDataType().getDisplayName()).lower()
-                    if (
-                        "string" in dt_name
-                        or "unicode" in dt_name
-                        or "char" in dt_name
-                    ):
-                        value = "" if data.getValue() is None else str(data.getValue())
-                        if filter_text and filter_text not in value.casefold():
-                            continue
-                        escaped_value = self._escape_display_string(value)
-                        strings.append(f'{data.getAddress()}: "{escaped_value}"')
-                except Exception:
-                    continue
-
+            data_iter = self._DefinedStringIterator.forProgram(self._program)
+            strings = []
+            for d in data_iter:
+                s = d.value
+                if filter and filter not in s:
+                   continue
+                addr = d.minAddress
+                strings.append(f"{addr}: {s}")
             return self._render_paginated_lines(strings, offset, limit)
         except Exception as exc:
             return self._operation_error_lines("list_strings", exc)
