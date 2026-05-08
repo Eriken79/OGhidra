@@ -17,7 +17,7 @@ class ToolCallRecord(BaseModel):
     status: Optional[Literal["success", "error"]] = None
     result_preview: Optional[str] = Field(default=None, max_length=1000, description="Brief summary of the tool's output")
 
-    @validator("tool_name")
+    @field_validator("tool_name")
     def validate_tool_name(cls, v):
         """Validate tool name format."""
         if not v.strip():
@@ -50,14 +50,14 @@ class SessionRecord(BaseModel):
         default=None, max_length=2000, description="LLM-generated summary of key findings or solution"
     )
 
-    @validator("user_task_description")
+    @field_validator("user_task_description")
     def validate_task_description(cls, v):
         """Ensure task description is meaningful."""
         if not v.strip():
             raise ValueError("Task description cannot be empty or whitespace")
         return v.strip()
 
-    @validator("end_time")
+    @field_validator("end_time")
     def validate_end_time(cls, v, values):
         """Ensure end_time is after start_time."""
         if v and "start_time" in values:
