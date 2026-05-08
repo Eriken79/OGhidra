@@ -15,6 +15,7 @@ Usage:
 
 import os
 import sys
+import warnings
 
 # Add project root to path for imports
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,6 +27,9 @@ from src.ghidra_client import GhidraMCPClient
 
 def test_read_bytes_hex_format():
     """Test reading bytes in hex dump format."""
+    warnings.warn(
+        "These tests only work if the Ghidra client is running with the MCP plugin working. Either the tests should be mocked or the tests are moved from pytest to some sort of system testing."
+    )
     print("\n" + "=" * 60)
     print("TEST: read_bytes (hex format)")
     print("=" * 60)
@@ -68,6 +72,9 @@ def test_read_bytes_hex_format():
 
 def test_read_bytes_raw_format():
     """Test reading bytes in base64 raw format."""
+    warnings.warn(
+        "These tests only work if the Ghidra client is running with the MCP plugin working. Either the tests should be mocked or the tests are moved from pytest to some sort of system testing."
+    )
     print("\n" + "=" * 60)
     print("TEST: read_bytes (raw/base64 format)")
     print("=" * 60)
@@ -104,6 +111,9 @@ def test_read_bytes_raw_format():
 
 def test_read_bytes_multiple_addresses():
     """Test reading from multiple addresses in the function."""
+    warnings.warn(
+        "These tests only work if the Ghidra client is running with the MCP plugin working. Either the tests should be mocked or the tests are moved from pytest to some sort of system testing."
+    )
     print("\n" + "=" * 60)
     print("TEST: read_bytes from multiple function addresses")
     print("=" * 60)
@@ -137,6 +147,9 @@ def test_read_bytes_multiple_addresses():
 
 def test_read_bytes_boundary_conditions():
     """Test edge cases and boundary conditions."""
+    warnings.warn(
+        "These tests only work if the Ghidra client is running with the MCP plugin working. Either the tests should be mocked or the tests are moved from pytest to some sort of system testing."
+    )
     print("\n" + "=" * 60)
     print("TEST: read_bytes boundary conditions")
     print("=" * 60)
@@ -169,6 +182,8 @@ def test_read_bytes_boundary_conditions():
     return all_passed
 
 
+# TODO: These tests only work if the Ghidra client is running with the MCP plugin working.
+# Either the tests should be mocked or the tests are moved from pytest to some sort of system testing.
 def main():
     """Run all read_bytes tests."""
     print("\n" + "=" * 60)
