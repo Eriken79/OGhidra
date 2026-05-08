@@ -1,4 +1,5 @@
 # OGhidra - AI-Powered Reverse Engineering with Ghidra
+
 ### Try with gemini-3.1-flash-lite-preview for insanely fast Zero-Day Hunting
 
 ![Python Version](https://img.shields.io/badge/python-3.12%2B-blue?logo=python)
@@ -10,7 +11,6 @@
 YouTube Setup Tutorial
 
 [![OGhidra Introduction](https://img.youtube.com/vi/hBD92FUgR0Y/0.jpg)](https://www.youtube.com/watch?v=hBD92FUgR0Y)
-
 
 ---
 
@@ -91,20 +91,68 @@ cp .env.example .env
 ### Setup Ghidra Plugin
 
 The OGhidraMCP plugin supports both Ghidra 11.3.2+ and Ghidra 12.0.3 (recommended).
-Theres also a youtube video https://www.youtube.com/watch?v=hBD92FUgR0Y
+There's also a YouTube video tutorial: https://www.youtube.com/watch?v=hBD92FUgR0Y
 
-1. **Identify the OGhidraMCP plugin**:
-   ```bash
-   # The plugin is: OGhidraMCP_1-9.zip or OGhidra_1-9_11.zip for the Ghidra 11.3.2
-   ```
+#### Building the GhidraMCP Extension
 
-2. **Install in Ghidra**:
+As a developer, you'll need to build the GhidraMCP extension before installing it in Ghidra:
+
+1. **Prerequisites**:
+   - Ghidra 12.0.3 (or compatible version) installed
+   - Gradle (run `gradle -v` to verify it's installed)
+   - Java 21 (required for Ghidra 12.0.3)
+
+2. **Option 1: Using the automated build scripts**:
+   - Windows:
+
+     ```bash
+     # Set the path to your Ghidra installation (will attempt to find last run copy of Ghidra if not set)
+     set GHIDRA_INSTALL_DIR=C:\path\to\ghidra_12.0_PUBLIC
+
+     # Run the build script
+     build_ghidra_plugin.bat
+     ```
+
+   - Unix/Linux/Mac:
+
+     ```bash
+     # Set the path to your Ghidra installation (will attempt to find last run copy of Ghidra if not set)
+     export GHIDRA_INSTALL_DIR=/path/to/ghidra_12.0_PUBLIC
+
+     # Run the build script (make it executable first if needed)
+     chmod +x build_ghidra_plugin.sh
+     ./build_ghidra_plugin.sh
+     ```
+
+3. **Option 2: Manual build process**:
+   - Create/update `OGhidraMCP/gradle.properties` with:
+
+     ```properties
+     GHIDRA_INSTALL_DIR=C:/path/to/ghidra_12.0_PUBLIC
+     ```
+
+   - Navigate to the OGhidraMCP directory and run the build:
+     ```bash
+     cd OGhidraMCP
+     gradle buildExtension
+     ```
+
+4. **Locate the built extension**:
+   - The extension zip file is created in `OGhidraMCP/dist/`
+   - The filename will be something like `ghidra_12.0_PUBLIC_YYYYMMDD_OGhidraMCP.zip`
+
+#### Installing the GhidraMCP Extension
+
+Once you've successfully built the extension:
+
+1. **Install in Ghidra**:
    - Open Ghidra -> **File** -> **Install Extensions**
    - Click **Add Extension** (green plus icon)
-   - Select the correct `OGhidraMCP.zip` for your Ghidra version
+   - Browse to your `OGhidraMCP/dist/` directory
+   - Select the newly built extension zip file (e.g., `ghidra_12.0_PUBLIC_YYYYMMDD_OGhidraMCP.zip`)
    - Restart Ghidra
 
-3. **Enable the plugin**:
+2. **Enable the plugin**:
    - Open a Ghidra project
    - **File** -> **Configure** -> Search "OGhidraMCP"
    - Check the box to enable
@@ -215,6 +263,7 @@ AI:  [recon -> correlation hooks -> multi-cycle analysis -> report]
 ```
 
 The investigation system includes:
+
 - **Recon Phase** - Maps imports, exports, strings (cached for follow-ups)
 - **Correlation Hooks** - 5 built-in vulnerability patterns (unquoted paths, DLL hijacking, command injection, privilege escalation, directory traversal)
 - **Recipe System** - Deterministic API tracing without LLM overhead
@@ -278,6 +327,7 @@ class MyHook(CorrelationHook):
 ### 6. Session Persistence
 
 Analysis state carries across queries within a session:
+
 - **Function Registry** - All analyzed functions accumulate
 - **Discovery Cache** - Imports/exports/strings cached from first recon
 - **Conversation History** - Follow-up questions reference prior answers
