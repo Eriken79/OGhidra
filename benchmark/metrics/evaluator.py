@@ -104,7 +104,7 @@ class SemanticEvaluator:
         use_gpu: bool = True,
         batch_size: int = 32,
         include_llm_judge: bool = False,
-        ollama_client: Optional[Any] = None,
+        llm_client: Optional[Any] = None,
     ):
         """
         Initialize the evaluator with selected metrics.
@@ -113,13 +113,13 @@ class SemanticEvaluator:
             use_gpu: Use GPU for transformer-based metrics
             batch_size: Batch size for efficient processing
             include_llm_judge: Whether to include LLM-as-Judge (slower but more nuanced)
-            ollama_client: OllamaClient instance for LLM-as-Judge
+            llm_client: OllamaClient instance for LLM-as-Judge
         """
         self.use_gpu = use_gpu
         self.batch_size = batch_size
         self.metrics: Dict[str, BaseMetric] = {}
         self._initialized = False
-        self._ollama_client = ollama_client
+        self._llm_embedding_client = llm_client
         self._include_llm_judge = include_llm_judge
 
         logger.info(f"SemanticEvaluator initialized (GPU: {use_gpu}, batch_size: {batch_size})")
@@ -154,7 +154,7 @@ class SemanticEvaluator:
         except ImportError as e:
             logger.warning(f"ROUGE not available: {e}. Install with: pip install rouge-score")
 
-        if self._include_llm_judge and self._ollama_client:
+        if self._include_llm_judge and self._llm_embedding_client:
             try:
                 from .llm_judge import LLMJudgeMetric
 
