@@ -272,18 +272,19 @@ The investigation system includes:
 
 ### 3. Smart Tool Buttons (GUI)
 
-| Tool | Description |
-|------|-------------|
-| **Analyze Current Function** | Deep dive into selected function's behavior |
-| **Rename Current Function** | AI suggests meaningful names based on analysis |
-| **Rename All Functions** | Bulk rename with Smart/Full/Rename-Only options |
-| **Analyze Imports** | Identify libraries and external dependencies |
-| **Analyze Strings** | Find URLs, credentials, configuration data |
-| **Generate Report** | Comprehensive security assessment |
+| Tool                         | Description                                     |
+| ---------------------------- | ----------------------------------------------- |
+| **Analyze Current Function** | Deep dive into selected function's behavior     |
+| **Rename Current Function**  | AI suggests meaningful names based on analysis  |
+| **Rename All Functions**     | Bulk rename with Smart/Full/Rename-Only options |
+| **Analyze Imports**          | Identify libraries and external dependencies    |
+| **Analyze Strings**          | Find URLs, credentials, configuration data      |
+| **Generate Report**          | Comprehensive security assessment               |
 
 ### 4. Artifact Detection
 
 Real-time scanning of tool results for 19 security patterns:
+
 - **Privilege Escalation**: SeDebugPrivilege, AdjustTokenPrivileges, token manipulation
 - **Crypto/Credentials**: CryptEncrypt, hardcoded passwords, embedded private keys
 - **C2 Indicators**: Hardcoded IP URLs, network callbacks
@@ -428,18 +429,18 @@ Analysis state carries across queries within a session:
 
 ### Key Components
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| **Orchestrator** | `src/orchestrator.py` | Query routing, investigation planning, worker coordination |
-| **Worker Agent** | `src/agents/worker_agent.py` | Tool execution loop (conversational + investigation) |
-| **Blackboard** | `src/blackboard.py` | Shared investigation state across queries |
-| **Recipe Executor** | `src/recipes.py` | Deterministic API tracing (no LLM overhead) |
-| **Recipe Registry** | `src/recipe_registry.py` | Plugin system for custom analysis recipes |
-| **Correlation Hooks** | `src/correlation_hooks.py` | Extensible vulnerability pattern detection |
-| **Tool Health** | `src/tool_health.py` | Cross-worker tool failure tracking |
-| **Artifact Scanner** | `src/artifact_scanner.py` | Real-time security pattern matching |
-| **Config Loader** | `src/config_loader.py` | Multi-level config (user/project/env) |
-| **Lazy Ghidra** | `src/lazy_ghidra.py` | Deferred connection proxy |
+| Component             | File                         | Purpose                                                    |
+| --------------------- | ---------------------------- | ---------------------------------------------------------- |
+| **Orchestrator**      | `src/orchestrator.py`        | Query routing, investigation planning, worker coordination |
+| **Worker Agent**      | `src/agents/worker_agent.py` | Tool execution loop (conversational + investigation)       |
+| **Blackboard**        | `src/blackboard.py`          | Shared investigation state across queries                  |
+| **Recipe Executor**   | `src/recipes.py`             | Deterministic API tracing (no LLM overhead)                |
+| **Recipe Registry**   | `src/recipe_registry.py`     | Plugin system for custom analysis recipes                  |
+| **Correlation Hooks** | `src/correlation_hooks.py`   | Extensible vulnerability pattern detection                 |
+| **Tool Health**       | `src/tool_health.py`         | Cross-worker tool failure tracking                         |
+| **Artifact Scanner**  | `src/artifact_scanner.py`    | Real-time security pattern matching                        |
+| **Config Loader**     | `src/config_loader.py`       | Multi-level config (user/project/env)                      |
+| **Lazy Ghidra**       | `src/lazy_ghidra.py`         | Deferred connection proxy                                  |
 
 ---
 
