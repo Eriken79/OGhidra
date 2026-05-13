@@ -5,7 +5,6 @@ Main entry point for the Ollama-GhidraMCP Bridge application.
 
 import argparse
 import json
-import os
 import sys
 
 from dotenv import load_dotenv
@@ -17,7 +16,6 @@ load_dotenv(override=True)
 from src.bridge import Bridge
 from src.config import BridgeConfig, get_config
 from src.ghidra_client import GhidraMCPClient
-from src.ollama_client import OllamaClient
 
 
 def print_header():
