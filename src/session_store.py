@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 
 from .memory_models import SessionRecord, ToolCallRecord
 
+
 class SessionHistoryStore:
     def __init__(self, storage_path: str = "session_history.jsonl"):
         self.storage_path = storage_path
@@ -30,7 +31,7 @@ class SessionHistoryStore:
         """Loads all session records from the storage file."""
         if not os.path.exists(self.storage_path):
             return []
-        
+
         records = []
         with open(self.storage_path, "r", encoding="utf-8") as f:
             for line_number, line in enumerate(f, 1):
@@ -43,10 +44,10 @@ class SessionHistoryStore:
                     except Exception as e:
                         print(f"Warning: Skipping record on line {line_number} due to data conversion error: {e}")
         return records
-    
+
     def get_session_by_id(self, session_id: str) -> Optional[SessionRecord]:
         """Retrieves a specific session by its ID."""
         for session in self.load_all_sessions():
             if session.session_id == session_id:
                 return session
-        return None 
+        return None
