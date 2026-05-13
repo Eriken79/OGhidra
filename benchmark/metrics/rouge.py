@@ -10,7 +10,7 @@ than embedding-based metrics, but useful for content coverage.
 """
 
 import logging
-from typing import List, Dict
+from typing import Dict, List
 
 from .evaluator import BaseMetric
 

@@ -8,7 +8,7 @@ access to the original source code.
 """
 
 import logging
-from typing import Optional, Any
+from typing import Any, Optional
 
 from .extractor import FunctionGroundTruth
 

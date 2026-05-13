@@ -7,10 +7,10 @@ This is the "candidate" generator for benchmark evaluation.
 """
 
 import logging
-import time
 import re
-from typing import Dict, List, Optional, Any
+import time
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("oghidra.benchmark.runners.oghidra")
 

@@ -9,8 +9,8 @@ Uses regex-based parsing for portability (no external dependencies like libclang
 For more accurate parsing, consider integrating with tree-sitter or clang.
 """
 
-import re
 import logging
+import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 

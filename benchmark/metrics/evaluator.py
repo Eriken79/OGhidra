@@ -16,9 +16,10 @@ Usage:
 """
 
 import logging
-from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 
 logger = logging.getLogger("oghidra.benchmark.evaluator")

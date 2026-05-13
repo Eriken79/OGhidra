@@ -81,8 +81,8 @@ def cmd_run(args):
     """Run benchmark on a ground truth dataset."""
     from benchmark.ground_truth import GroundTruthExtractor
     from benchmark.ground_truth.extractor import GroundTruthDataset
-    from benchmark.runners import BenchmarkRunner, BenchmarkConfig
     from benchmark.reports import ReportGenerator
+    from benchmark.runners import BenchmarkConfig, BenchmarkRunner
 
     logger.info(f"Loading dataset: {args.dataset}")
 
@@ -92,8 +92,8 @@ def cmd_run(args):
 
     # Initialize OGhidra bridge
     try:
-        from src.config import get_config
         from src.bridge import Bridge
+        from src.config import get_config
 
         config = get_config()
         bridge = Bridge(
@@ -177,8 +177,8 @@ def cmd_evaluate(args):
 
 def cmd_report(args):
     """Generate reports from existing results."""
-    from benchmark.runners.benchmark_runner import BenchmarkResults
     from benchmark.reports import ReportGenerator
+    from benchmark.runners.benchmark_runner import BenchmarkResults
 
     logger.info(f"Loading results: {args.results}")
 
