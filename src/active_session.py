@@ -3,7 +3,7 @@ Active session management for the Ollama-GhidraMCP Bridge.
 """
 
 import datetime
-from typing import Literal, Dict, Any, Optional, List
+from typing import Any, Dict, List, Literal, Optional
 
 from .memory_models import SessionRecord, ToolCallRecord
 from .session_store import SessionHistoryStore

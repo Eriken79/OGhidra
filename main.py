@@ -3,20 +3,22 @@
 Main entry point for the Ollama-GhidraMCP Bridge application.
 """
 
-import os
-import sys
 import argparse
 import json
+import os
+import sys
+
 from dotenv import load_dotenv
 
 # Load environment variables from .env file if present
 load_dotenv(override=True)
 
 # Import after loading environment variables
-from src.config import get_config, BridgeConfig
 from src.bridge import Bridge
-from src.ollama_client import OllamaClient
+from src.config import BridgeConfig, get_config
 from src.ghidra_client import GhidraMCPClient
+from src.ollama_client import OllamaClient
+
 
 def print_header():
     """Print the application header."""
@@ -885,8 +887,9 @@ CRITICAL: You MUST include all four sections with the exact headers shown above.
                                 vectors_failed = 0
                                 
                                 # Import necessary modules
-                                from src.bridge import Bridge
                                 import numpy as np
+
+                                from src.bridge import Bridge
                                 
                                 # Test Ollama embeddings availability
                                 test_embeddings = Bridge.get_ollama_embeddings(["test"])
@@ -1126,8 +1129,8 @@ def main():
 
 def check_and_initialize_vector_db():
     """Check if vector database exists and initialize if needed."""
-    from pathlib import Path
     import logging
+    from pathlib import Path
     
     logger = logging.getLogger("main.vector_init")
     

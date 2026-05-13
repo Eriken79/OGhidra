@@ -2,10 +2,10 @@
 Session history storage and retrieval.
 """
 
+import datetime
 import json
 import os
-import datetime
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 from .memory_models import SessionRecord, ToolCallRecord
 
