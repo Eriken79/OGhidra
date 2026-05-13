@@ -6,7 +6,7 @@ import datetime
 import uuid
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class ToolCallRecord(BaseModel):
