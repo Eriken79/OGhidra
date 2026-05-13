@@ -13,15 +13,15 @@ Usage:
     python tests/test_read_bytes.py
 """
 
-import sys
 import os
+import sys
 
 # Add project root to path for imports
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-from src.ghidra_client import GhidraMCPClient
 from src.config import GhidraMCPConfig
+from src.ghidra_client import GhidraMCPClient
 
 
 def test_read_bytes_hex_format():

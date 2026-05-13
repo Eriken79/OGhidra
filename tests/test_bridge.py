@@ -1,16 +1,17 @@
-import unittest
-from unittest.mock import MagicMock, patch
+import os
 import re
 import sys
-import os
 import threading
 import time
+import unittest
+from unittest.mock import MagicMock, patch
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.bridge import Bridge
 from src.config import BridgeConfig
+
 
 class TestBridge(unittest.TestCase):
     """Tests for the Bridge class."""
