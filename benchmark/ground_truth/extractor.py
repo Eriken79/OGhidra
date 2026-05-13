@@ -100,14 +100,14 @@ class GroundTruthDataset:
 
     def save(self, path: str):
         """Save dataset to JSON file."""
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         logger.info(f"Saved ground truth dataset to {path}")
 
     @classmethod
     def load(cls, path: str) -> "GroundTruthDataset":
         """Load dataset from JSON file."""
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             data = json.load(f)
 
         functions = [FunctionGroundTruth(**f) for f in data.pop("functions")]

@@ -27,10 +27,7 @@ import sys
 from pathlib import Path
 
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("oghidra.benchmark.cli")
 
 
@@ -46,6 +43,7 @@ def cmd_extract(args):
         try:
             from src.config import get_config
             from src.ollama_client import OllamaClient
+
             config = get_config()
             ollama_client = OllamaClient(config.ollama)
             logger.info("Ollama client initialized for summary generation")
@@ -145,8 +143,7 @@ def cmd_run(args):
     print(f"Functions evaluated: {results.functions_evaluated}")
     print(f"Functions failed: {results.functions_failed}")
     print(f"Total time: {results.total_time:.1f}s")
-    print(f"\nCombined Score: {stats.get('combined', {}).get('mean', 0):.3f} "
-          f"(±{stats.get('combined', {}).get('std', 0):.3f})")
+    print(f"\nCombined Score: {stats.get('combined', {}).get('mean', 0):.3f} (±{stats.get('combined', {}).get('std', 0):.3f})")
     print("=" * 60)
 
 
@@ -188,8 +185,8 @@ def cmd_report(args):
     # Reconstruct results object (simplified)
     from benchmark.runners.benchmark_runner import BenchmarkConfig, FunctionBenchmarkResult
 
-    config = BenchmarkConfig(**data['config'])
-    function_results = [FunctionBenchmarkResult(**r) for r in data['function_results']]
+    config = BenchmarkConfig(**data["config"])
+    function_results = [FunctionBenchmarkResult(**r) for r in data["function_results"]]
 
     # Create minimal results object for report generation
     class ResultsWrapper:
@@ -197,13 +194,13 @@ def cmd_report(args):
 
     results = ResultsWrapper()
     results.config = config
-    results.dataset_name = data['dataset_name']
-    results.run_timestamp = data['run_timestamp']
+    results.dataset_name = data["dataset_name"]
+    results.run_timestamp = data["run_timestamp"]
     results.function_results = function_results
-    results.statistics = data['statistics']
-    results.total_time = data['total_time']
-    results.functions_evaluated = data['functions_evaluated']
-    results.functions_failed = data['functions_failed']
+    results.statistics = data["statistics"]
+    results.total_time = data["total_time"]
+    results.functions_evaluated = data["functions_evaluated"]
+    results.functions_failed = data["functions_failed"]
 
     # Generate reports
     generator = ReportGenerator(output_dir=args.output or "benchmark/reports")
@@ -222,7 +219,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="OGhidra Semantic Similarity Benchmark",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__
+        epilog=__doc__,
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -235,8 +232,7 @@ def main():
     extract_parser.add_argument("--binary", "-b", help="Path to compiled binary")
     extract_parser.add_argument("--optimization", default="O2", help="Optimization level")
     extract_parser.add_argument("--compiler", default="gcc", help="Compiler used")
-    extract_parser.add_argument("--generate-summaries", "-g", action="store_true",
-                               help="Generate LLM summaries from source")
+    extract_parser.add_argument("--generate-summaries", "-g", action="store_true", help="Generate LLM summaries from source")
 
     # Run command
     run_parser = subparsers.add_parser("run", help="Run benchmark on dataset")
@@ -258,8 +254,9 @@ def main():
     report_parser = subparsers.add_parser("report", help="Generate reports from results")
     report_parser.add_argument("--results", "-r", required=True, help="Results JSON file")
     report_parser.add_argument("--output", "-o", help="Output directory/file")
-    report_parser.add_argument("--format", "-f", choices=["all", "markdown", "html", "csv"],
-                              default="all", help="Report format")
+    report_parser.add_argument(
+        "--format", "-f", choices=["all", "markdown", "html", "csv"], default="all", help="Report format"
+    )
 
     args = parser.parse_args()
 

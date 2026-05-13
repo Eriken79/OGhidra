@@ -39,10 +39,10 @@ class EvaluationResult:
     def combined_score(self) -> float:
         """Weighted combination of all metrics."""
         weights = {
-            'bert_score_f1': 0.35,
-            'sbert_cosine': 0.35,
-            'rouge_l': 0.15,
-            'llm_judge': 0.15,
+            "bert_score_f1": 0.35,
+            "sbert_cosine": 0.35,
+            "rouge_l": 0.15,
+            "llm_judge": 0.15,
         }
 
         total_weight = 0
@@ -132,21 +132,24 @@ class SemanticEvaluator:
         # Import and initialize metrics
         try:
             from .bert_score import BERTScoreMetric
-            self.metrics['bert_score_f1'] = BERTScoreMetric(use_gpu=self.use_gpu)
+
+            self.metrics["bert_score_f1"] = BERTScoreMetric(use_gpu=self.use_gpu)
             logger.info("BERTScore metric loaded")
         except ImportError as e:
             logger.warning(f"BERTScore not available: {e}. Install with: pip install bert-score")
 
         try:
             from .sentence_bert import SentenceBERTMetric
-            self.metrics['sbert_cosine'] = SentenceBERTMetric(use_gpu=self.use_gpu)
+
+            self.metrics["sbert_cosine"] = SentenceBERTMetric(use_gpu=self.use_gpu)
             logger.info("SentenceBERT metric loaded")
         except ImportError as e:
             logger.warning(f"SentenceBERT not available: {e}. Install with: pip install sentence-transformers")
 
         try:
             from .rouge import RougeMetric
-            self.metrics['rouge_l'] = RougeMetric()
+
+            self.metrics["rouge_l"] = RougeMetric()
             logger.info("ROUGE metric loaded")
         except ImportError as e:
             logger.warning(f"ROUGE not available: {e}. Install with: pip install rouge-score")
@@ -154,7 +157,8 @@ class SemanticEvaluator:
         if self._include_llm_judge and self._ollama_client:
             try:
                 from .llm_judge import LLMJudgeMetric
-                self.metrics['llm_judge'] = LLMJudgeMetric(ollama_client=self._ollama_client)
+
+                self.metrics["llm_judge"] = LLMJudgeMetric(ollama_client=self._ollama_client)
                 logger.info("LLM-as-Judge metric loaded")
             except Exception as e:
                 logger.warning(f"LLM-as-Judge not available: {e}")
@@ -162,10 +166,7 @@ class SemanticEvaluator:
         self._initialized = True
 
         if not self.metrics:
-            raise RuntimeError(
-                "No metrics available. Install at least one of: "
-                "bert-score, sentence-transformers, rouge-score"
-            )
+            raise RuntimeError("No metrics available. Install at least one of: bert-score, sentence-transformers, rouge-score")
 
     def evaluate(
         self,
@@ -244,13 +245,15 @@ class SemanticEvaluator:
         results = []
         for i in range(n):
             scores = {name: all_scores[name][i] for name in self.metrics}
-            results.append(EvaluationResult(
-                function_id=function_ids[i],
-                generated_summary=generated[i],
-                reference_summary=references[i],
-                scores=scores,
-                metadata=metadata[i],
-            ))
+            results.append(
+                EvaluationResult(
+                    function_id=function_ids[i],
+                    generated_summary=generated[i],
+                    reference_summary=references[i],
+                    scores=scores,
+                    metadata=metadata[i],
+                )
+            )
 
         return results
 
