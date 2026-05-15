@@ -1,6 +1,6 @@
 # OGhidra 3 - AI-Powered Reverse Engineering with Ghidra
 
-### Try with gemini-3.1-flash-lite-preview for insanely fast Zero-Day Hunting
+For the version using a Claude-inspired Orchestrator, see https://github.com/llnl/OGhidra/tree/orchestrator
 
 ![Python Version](https://img.shields.io/badge/python-3.12%2B-blue?logo=python)
 ![License](https://img.shields.io/badge/license-BSD--3--Clause-green)
