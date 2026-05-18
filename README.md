@@ -173,6 +173,34 @@ CUSTOM_API_MODEL=your-model-name
 CUSTOM_API_EMBEDDING_MODEL=your-embedding-model
 ```
 
+### Backend Setups
+
+OGhidra implements two backend types, MCP and pyGhidra
+MCP allows for integration with the GhidraMCP server and
+requires the Ghidra client to be run during analysis
+PyGhidra allows for headless analysis without the Ghidra
+client and removes the server component associated with MCP
+
+The following command line option exists for choosing backends:
+--ghidra-backend={http,pyghidra}
+http will result in the GhidraMCP backend
+pyghidra will result in the PyGhidra backend
+
+The following options exist for configuring the PyGhidra backend:
+--pyghidra-project={*.gpr}
+PyGhidra requires a Ghidra project file in order to launch OGhidra
+specify the .gpr file on the command line with its path
+--pyghidra-program
+If a user wants only a specific binary within the Ghidra project to be
+analyzed, pass the name for the binary in the Ghidra project and OGhidra
+will only analyze that binary. Not passing this command line flag by default
+opens all of the binaries in the Ghidra project through JPype 
+to be analyzed by OGhidra
+--pyghidra-binary
+The PyGhidra backend allows a user to specify the path for a binary on the
+command line, resulting in a new Ghidra project (.gpr) being generated and
+the binary being launched in OGhidra
+
 ### Orchestrator Settings
 
 ```env
