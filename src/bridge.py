@@ -21,7 +21,7 @@ from src.config import BridgeConfig
 from src.ollama_client import OllamaClient
 from src.external_client import ExternalClient
 from src.custom_api_client import CustomAPIClient
-from src.ghidra_client import GhidraMCPClient
+from src.ghidra_client import GhidraMCPClient, AbstractGhidraClient, PyGhidraClient
 from src.command_parser import CommandParser
 from src.cag.manager import CAGManager
 from src import config
@@ -30,11 +30,12 @@ from src.models.memory import (
     MessageRole,
     CAGContext,
     StructuredPrompt,
+    SystemContextBuilder,
     AnalysisState,
     ExecutionPhaseResults,
     ToolExecution,
     ExecutionSignal,
-    ExecutionGate
+    ExecutionGate,
 )
 from src.execution_gate import ExecutionGatekeeper
 from src.user_question import QuestionHandler
@@ -43,6 +44,11 @@ from src.context_manager import ContextManager
 from src.analysis_dump import AnalysisDumper
 from src.coverage_tracker import CoverageTracker
 from src.lead_tracker import LeadTracker
+from src.tool_executor import ToolExecutor
+from src.event_emitter import EventEmitter
+from src.blackboard import BlackboardAccess
+from src.orchestrator import Orchestrator
+from src.lazy_ghidra import LazyGhidraClient
 from datetime import datetime
 
 # Configure logging
@@ -63,6 +69,23 @@ def setup_logging(config):
     )
     
     return logging.getLogger("ollama-ghidra-bridge")
+
+
+def select_ghidra_client_class(
+    config: BridgeConfig,
+) -> tuple[type[AbstractGhidraClient], str]:
+    """Return the configured Ghidra backend class and a short label."""
+    backend = getattr(config.ghidra, "backend", "http")
+    if backend == "pyghidra":
+        if PyGhidraClient is None:
+            raise RuntimeError(
+                "Ghidra backend 'pyghidra' selected but PyGhidraClient is not available. "
+                "Ensure pyghidra is installed and importable."
+            )
+        return PyGhidraClient, "pyGhidra"
+
+    return GhidraMCPClient, "HTTP GhidraMCP"
+
 
 class Bridge:
     """Main bridge class that connects Ollama with GhidraMCP."""
@@ -104,8 +127,18 @@ class Bridge:
 
         # Initialize clients
         # Note: self.ollama is used as the generic LLM client name to avoid massive refactoring
-        self.ghidra_client = GhidraMCPClient(config=config.ghidra, ollama_client=self.ollama)
-        
+
+        # Select Ghidra backend class based on configuration. Default is HTTP
+        # GhidraMCP server; "pyghidra" uses an in-process pyGhidra client.
+        ghidra_cls, backend_label = select_ghidra_client_class(config)
+        self.logger.info("Using %s backend for Ghidra integration", backend_label)
+
+        self.ghidra_client = LazyGhidraClient(
+            ghidra_cls,
+            config=config.ghidra,
+            ollama_client=self.ollama,
+        )
+
         # Set Ollama client for embeddings
         Bridge.set_ollama_client(self.ollama)
         
@@ -2470,14 +2503,26 @@ You can help analyze binary files by executing commands through GhidraMCP."""
                         continue  # Skip this command and get a new one
                     
                     if rename_count >= 2:  # After 2 rename attempts, provide guidance
-                        logging.warning(f"Multiple rename_function calls detected. Checking for context mismatch.")
+                        logging.warning(
+                            f"Multiple rename_function calls detected. Checking for context mismatch."
+                        )
+                        if getattr(self.config.ghidra, "backend", "http") == "pyghidra":
+                            rename_target_guidance = (
+                                "1. Do NOT call get_current_function(); the pyGhidra backend does not track the live Ghidra GUI selection\n"
+                                "2. Reuse an explicit function address or name from the current query/tool output\n"
+                                '3. If you have already renamed the intended function, respond with "GOAL ACHIEVED"'
+                            )
+                        else:
+                            rename_target_guidance = (
+                                "1. Call get_current_function() to see which function is currently selected in Ghidra\n"
+                                "2. Only rename the function that is currently selected\n"
+                                '3. If you have already renamed the correct function, respond with "GOAL ACHIEVED"'
+                            )
                         context_guidance = f"""
                         ATTENTION: You've called 'rename_function' {rename_count} times. 
                         
                         You're trying to rename '{old_name}'. Please verify this is the CURRENT function:
-                        1. Call get_current_function() to see which function is currently selected in Ghidra
-                        2. Only rename the function that is currently selected
-                        3. If you've already renamed the correct function, respond with "GOAL ACHIEVED"
+                        {rename_target_guidance}
                         
                         Do NOT rename functions from previous contexts or conversations.
                         """
@@ -7592,11 +7637,12 @@ def main():
         config.ollama.model_map["execution"] = args.execution_model
     if args.analysis_model:
         config.ollama.model_map["analysis"] = args.analysis_model
-        
+
     # Initialize clients
     ollama_client = OllamaClient(config.ollama)
-    ghidra_client = GhidraMCPClient(config.ghidra)
-    
+    ghidra_cls, _backend_label = select_ghidra_client_class(config)
+    ghidra_client = ghidra_cls(config.ghidra)
+
     # List models if requested
     if args.list_models:
         models = ollama_client.list_models()
