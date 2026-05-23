@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 import json
-import re
 
 
 _DEFAULT_KEYWORDS = [

@@ -5,7 +5,6 @@ Main entry point for the Ollama-GhidraMCP Bridge application.
 
 import argparse
 import json
-import logging
 import sys
 
 from dotenv import load_dotenv
@@ -240,7 +239,7 @@ def run_interactive_mode(bridge: Bridge, config: BridgeConfig):
                     # Session Memory status from cag_details
                     session_info = cag_details.get("session")
                     if session_info:
-                        print(f"Session Memory Active: Yes")
+                        print("Session Memory Active: Yes")
                         print(f"  Session ID: {session_info.get('session_id', 'N/A')}")
                         print(f"  Messages: {session_info.get('messages', 0)}")
                         print(f"  Tool Executions: {session_info.get('tool_executions', 0)}")
@@ -248,7 +247,7 @@ def run_interactive_mode(bridge: Bridge, config: BridgeConfig):
                         print(f"  Renamed Entities: {session_info.get('renamed_entities', 0)}")
                         print(f"  Analysis Results Cached: {session_info.get('analysis_results', 0)}")
                     else:
-                        print(f"Session Memory Active: No")
+                        print("Session Memory Active: No")
 
                     # Token limit is part of BridgeConfig, not CAGManager debug info directly
                     # However, the cag_manager might have its own internal token limits for enhancement logic
@@ -450,7 +449,7 @@ def run_interactive_mode(bridge: Bridge, config: BridgeConfig):
                                         f"Tool Output:\\n```json\\n{formatted_tool_data}\\n```"
                                     )
                                 elif tool_name == "list_strings":
-                                    analysis_prompt = f"""The Ghidra tool '{tool_name}' was executed. Its output (a list of strings found in the binary) is below. 
+                                    analysis_prompt = f"""The Ghidra tool '{tool_name}' was executed. Its output (a list of strings found in the binary) is below.
 Based *only* on this provided data:
 1. Are there any strings in this segment of output that look like file paths, URLs, or IP addresses?
 2. Are there any error messages or debug messages shown?
@@ -557,7 +556,7 @@ Tool Output:
                     )
 
                     print("\n============================================================")
-                    print(f"Results from analyze_function:")
+                    print("Results from analyze_function:")
                     print("============================================================")
                     current_session_log.append(f"=== Result of analyze-function({params_for_log}) ===\\n{raw_tool_result}\\n")
                     print(raw_tool_result)  # Print raw output
@@ -586,7 +585,7 @@ Tool Output:
                             f"Tool Output:\\n```json\\n{formatted_tool_data}\\n```"
                         )
 
-                        print(f"Sending output from analyze-function to AI for analysis...")
+                        print("Sending output from analyze-function to AI for analysis...")
                         try:
                             ai_analysis = (
                                 bridge.ollama.generate(prompt=analysis_prompt)
@@ -720,7 +719,7 @@ Tool Output:
                             # STEP 1.5: Gather contextual information (callers and callees)
                             context = {"callers_code": [], "callees_code": [], "truncated": False, "total_chars": 0}
                             try:
-                                print(f"  🔍 Gathering context (callers/callees)...")
+                                print("  🔍 Gathering context (callers/callees)...")
 
                                 # Get callers (who calls this function?)
                                 try:
@@ -809,7 +808,7 @@ Tool Output:
                                         f"  ✓ Context: {callers_count} caller(s), {callees_count} callee(s) ({context['total_chars']} chars)"
                                     )
                                 else:
-                                    print(f"  ℹ️  No caller/callee context found")
+                                    print("  ℹ️  No caller/callee context found")
                             except Exception as e:
                                 print(f"  ⚠ Context gathering failed: {e}")
 
@@ -877,7 +876,7 @@ CRITICAL: You MUST include all four sections with the exact headers shown above.
 
                             if ai_response and ai_response.strip():
                                 function_summary = ai_response.strip()
-                                print(f"  ✓ AI analysis complete")
+                                print("  ✓ AI analysis complete")
 
                                 # Extract suggested name from AI response (same logic as UI)
                                 suggested_name = None
@@ -986,7 +985,7 @@ CRITICAL: You MUST include all four sections with the exact headers shown above.
                                         f"  ℹ️  Already has descriptive name: {function_name} (AI suggested: {suggested_name})"
                                     )
                                 elif not suggested_name:
-                                    print(f"  ⚠ Could not extract function name from AI response")
+                                    print("  ⚠ Could not extract function name from AI response")
                                     print(f"  ℹ️  Keeping original name: {function_name}")
 
                                 # Store function summary
@@ -1009,7 +1008,7 @@ CRITICAL: You MUST include all four sections with the exact headers shown above.
                                     f"=== Processed: {function_name} → {final_name} at {address} ===\\n{function_summary}\\n"
                                 )
                             else:
-                                print(f"  ⚠ AI analysis failed or returned empty")
+                                print("  ⚠ AI analysis failed or returned empty")
                                 failed_enumerations += 1
 
                         except Exception as e:
@@ -1132,17 +1131,17 @@ CRITICAL: You MUST include all four sections with the exact headers shown above.
                     print("\n" + "=" * 60)
                     print("🎉 BINARY ENUMERATION COMPLETE 🎉")
                     print("=" * 60)
-                    print(f"📊 Summary:")
+                    print("📊 Summary:")
                     print(f"  • Total functions: {total_functions}")
                     print(f"  • Successfully processed: {successful_enumerations}")
                     print(f"  • Failed: {failed_enumerations}")
                     print(f"  • Vectors loaded: {vectors_loaded if 'vectors_loaded' in locals() else 0}")
-                    print(f"⚡ Performance:")
+                    print("⚡ Performance:")
                     print(f"  • Total time: {total_time:.1f}s")
                     print(f"  • Average per function: {avg_time:.2f}s")
-                    print(f"\nℹ️  Functions with generic names (FUN_, sub_, etc.) were renamed.")
-                    print(f"ℹ️  Functions with descriptive names were analyzed but kept their original names.")
-                    print(f"ℹ️  All analyses are available in the vector store for enhanced queries.")
+                    print("\nℹ️  Functions with generic names (FUN_, sub_, etc.) were renamed.")
+                    print("ℹ️  Functions with descriptive names were analyzed but kept their original names.")
+                    print("ℹ️  All analyses are available in the vector store for enhanced queries.")
                     print("=" * 60 + "\n")
 
                 except Exception as e:

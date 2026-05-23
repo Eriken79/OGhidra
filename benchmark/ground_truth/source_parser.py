@@ -12,7 +12,7 @@ For more accurate parsing, consider integrating with tree-sitter or clang.
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from .extractor import FunctionGroundTruth
 
