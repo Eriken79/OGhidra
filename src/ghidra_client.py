@@ -3,7 +3,6 @@ Client for interacting with the GhidraMCP API.
 """
 
 import logging
-import time
 import re
 import struct
 import base64
@@ -323,22 +322,23 @@ class AbstractGhidraClient(ABC):
     def read_bytes(self, address: str, length: int = 16, format: str = "hex") -> str:
         """Read raw bytes from memory."""
 
+
     def analyze_function(self, address: str = None) -> str:
         """
         Analyze a function, including its decompiled code and all functions it calls.
         If no address is provided, uses the current function.
-        
+
         Args:
             address: Function address (optional)
-            
+
         Returns:
             Comprehensive function analysis including decompiled code and referenced functions
         """
         if address is None:
             determined_address = None
             # Try with get_current_function() first
-            current_function_info = self.get_current_function() # Expected: "FunctionName @ Address" or error string
-            
+            current_function_info = self.get_current_function()  # Expected: "FunctionName @ Address" or error string
+
             if not current_function_info.startswith("Error"):
                 if "@ " in current_function_info:
                     parts = current_function_info.split("@ ", 1)
@@ -347,50 +347,68 @@ class AbstractGhidraClient(ABC):
                         # Validate if the extracted address is a non-empty hex string
                         if potential_address and all(c in "0123456789abcdefABCDEF" for c in potential_address):
                             determined_address = potential_address
-                            logger.info(f"analyze_function: Determined address '{determined_address}' from get_current_function() result: '{current_function_info}'.")
+                            logger.info(
+                                f"analyze_function: Determined address '{determined_address}' from get_current_function() result: '{current_function_info}'."
+                            )
                         else:
-                            logger.warning(f"analyze_function: Extracted part '{potential_address}' from get_current_function() result ('{current_function_info}') is not a valid hex address.")
+                            logger.warning(
+                                f"analyze_function: Extracted part '{potential_address}' from get_current_function() result ('{current_function_info}') is not a valid hex address."
+                            )
                     else:
                         # This case should ideally not be reached if "@ " is present and split is limited to 1
-                        logger.warning(f"analyze_function: Unexpected split result from get_current_function() ('{current_function_info}') despite '@ ' being present.")
+                        logger.warning(
+                            f"analyze_function: Unexpected split result from get_current_function() ('{current_function_info}') despite '@ ' being present."
+                        )
                 else:
-                    logger.warning(f"analyze_function: Result from get_current_function() ('{current_function_info}') does not contain '@ '. Attempting get_current_address().")
+                    logger.warning(
+                        f"analyze_function: Result from get_current_function() ('{current_function_info}') does not contain '@ '. Attempting get_current_address()."
+                    )
             else:
-                logger.warning(f"analyze_function: get_current_function() returned an error: '{current_function_info}'. Attempting get_current_address().")
+                logger.warning(
+                    f"analyze_function: get_current_function() returned an error: '{current_function_info}'. Attempting get_current_address()."
+                )
 
             # If get_current_function() didn't yield a valid address, try get_current_address()
             if determined_address is None:
                 logger.info("analyze_function: Trying get_current_address() as fallback to determine function address.")
-                current_address_str = self.get_current_address() # Expected: "Address" or error string
+                current_address_str = self.get_current_address()  # Expected: "Address" or error string
                 # Validate if current_address_str is a non-empty hex string and not an error
-                if not current_address_str.startswith("Error") and current_address_str and all(c in "0123456789abcdefABCDEF" for c in current_address_str):
+                if (
+                    not current_address_str.startswith("Error")
+                    and current_address_str
+                    and all(c in "0123456789abcdefABCDEF" for c in current_address_str)
+                ):
                     determined_address = current_address_str
                     logger.info(f"analyze_function: Determined address '{determined_address}' from get_current_address().")
                 else:
-                    logger.warning(f"analyze_function: get_current_address() did not yield a valid hex address. Result: '{current_address_str}'")
-            
+                    logger.warning(
+                        f"analyze_function: get_current_address() did not yield a valid hex address. Result: '{current_address_str}'"
+                    )
+
             if determined_address:
                 address = determined_address
             else:
-                logger.error("analyze_function: Could not determine current function address automatically after trying get_current_function() and get_current_address().")
+                logger.error(
+                    "analyze_function: Could not determine current function address automatically after trying get_current_function() and get_current_address()."
+                )
                 return "Error: Could not determine current function address. Please provide an address or ensure a function/address is selected in Ghidra."
-        
+
         # Get the decompiled code for the target function
         decompiled_code = self.decompile_function_by_address(address)
         if decompiled_code.startswith("Error"):
             return f"Error analyzing function at {address}: {decompiled_code}"
-            
+
         # Extract function calls from the decompiled code
         function_calls = []
         for line in decompiled_code.splitlines():
-            matches = re.finditer(r'\b(\w+)\s*\(', line)
+            matches = re.finditer(r"\b(\w+)\s*\(", line)
             for match in matches:
                 func_name = match.group(1)
                 if func_name not in ["if", "while", "for", "switch", "return", "sizeof"]:
                     function_calls.append(func_name)
-        
+
         function_calls = list(set(function_calls))
-        
+
         # If AI analysis is available, generate semantic summary
         if self.ollama_client:
             try:
@@ -411,9 +429,9 @@ class AbstractGhidraClient(ABC):
                     f"SUGGESTED NAME: <descriptive_function_name>\n\n"
                     f"DECOMPILED CODE:\n{decompiled_code[:4000]}\n"  # Limit to avoid context overflow
                 )
-                
+
                 ai_summary = self.ollama_client.generate(prompt=analysis_prompt, temperature=0.3)
-                
+
                 # Build result with AI analysis first
                 result = [
                     f"=== AI-POWERED ANALYSIS OF FUNCTION AT {address} ===",
@@ -424,11 +442,11 @@ class AbstractGhidraClient(ABC):
                     "",
                     decompiled_code[:2000],  # Show limited code sample
                     "... [Code truncated for context efficiency] ..." if len(decompiled_code) > 2000 else "",
-                    ""
+                    "",
                 ]
-                
+
                 logger.info(f"AI analysis generated for function at {address}")
-                
+
             except Exception as e:
                 logger.warning(f"AI analysis failed for function at {address}: {e}. Falling back to raw code.")
                 # Fallback to raw code if AI analysis fails
@@ -436,7 +454,7 @@ class AbstractGhidraClient(ABC):
         else:
             # No AI available, use raw code
             result = [f"=== ANALYSIS OF FUNCTION AT {address} ===", "", decompiled_code, ""]
-        
+
         # Optionally append a few key referenced functions (not all to save context)
         if function_calls and len(function_calls) > 0:
             result.append("=== KEY REFERENCED FUNCTIONS (SAMPLE) ===")
@@ -462,28 +480,28 @@ class AbstractGhidraClient(ABC):
     # =========================================================================
 
     def scan_function_pointer_tables(
-        self, 
+        self,
         min_table_entries: int = 3,
         pointer_size: int = 8,
         max_scan_size: int = 524288,  # 512KB per segment max
-        alignment: int = 8
+        alignment: int = 8,
     ) -> List[Dict]:
         """
         Scan the binary for function pointer tables without LLM assistance.
-        
+
         Algorithm:
         1. Get all memory segments and identify data segments
         2. Get all known function addresses to build a lookup set
         3. Scan data segments for pointer-aligned sequences
         4. Identify consecutive values that match valid function addresses
         5. Return list of suspected tables with their entries
-        
+
         Args:
             min_table_entries: Minimum consecutive function pointers to qualify as a table (default: 3)
             pointer_size: Size of pointers in bytes (8 for x64, 4 for x86)
             max_scan_size: Maximum bytes to scan per segment
             alignment: Expected pointer alignment
-            
+
         Returns:
             List of dicts: {
                 'table_address': str,
@@ -492,12 +510,12 @@ class AbstractGhidraClient(ABC):
             }
         """
         results = []
-        
+
         # Step 1: Get all function addresses and build a lookup table
         logger.info("Building function address lookup table...")
         functions_raw = self.list_functions()
         function_map = {}  # address -> name
-        
+
         for line in functions_raw:
             # Parse "FUN_140001234 at 140001234" or "main at 140001234"
             if " at " in line:
@@ -510,25 +528,25 @@ class AbstractGhidraClient(ABC):
                         function_map[addr_int] = name
                     except ValueError:
                         continue
-        
+
         if not function_map:
             logger.warning("No functions found, cannot scan for tables")
             return []
-        
+
         # Determine code address range for quick filtering
         min_func_addr = min(function_map.keys())
         max_func_addr = max(function_map.keys())
         logger.info(f"Found {len(function_map)} functions in range 0x{min_func_addr:x} - 0x{max_func_addr:x}")
-        
+
         # Step 2: Get memory segments and identify data segments
         logger.info("Analyzing memory segments...")
         segments_raw = self.list_segments()
         data_segments = []
-        
+
         for line in segments_raw:
             # Parse segment info - Ghidra format: ".text: 401000 - 41d5ff"
             # Look for the pattern after the colon: "start - end" where start/end are hex
-            seg_match = re.match(r'^([^:]+):\s*([0-9a-fA-F]+)\s*-\s*([0-9a-fA-F]+)', line)
+            seg_match = re.match(r"^([^:]+):\s*([0-9a-fA-F]+)\s*-\s*([0-9a-fA-F]+)", line)
             if seg_match:
                 try:
                     seg_name = seg_match.group(1).strip()
@@ -536,73 +554,80 @@ class AbstractGhidraClient(ABC):
                     end = int(seg_match.group(3), 16)
                     size = end - start
                     if size > 0:
-                        data_segments.append({
-                            'start': start, 
-                            'end': end, 
-                            'name': seg_name,
-                            'size': size
-                        })
+                        data_segments.append({"start": start, "end": end, "name": seg_name, "size": size})
                         logger.debug(f"Parsed segment: {seg_name} 0x{start:x} - 0x{end:x} ({size} bytes)")
                 except ValueError:
                     continue
-        
+
         # If we couldn't parse segments, try scanning around function addresses
         if not data_segments:
             logger.warning("Could not parse data segments, scanning around function address range")
             # Create a pseudo-segment covering the function address space + some buffer
-            data_segments = [{
-                'start': max(0, min_func_addr - 0x10000),
-                'end': max_func_addr + 0x10000,
-                'name': 'inferred',
-                'size': (max_func_addr - min_func_addr) + 0x20000
-            }]
-        
+            data_segments = [
+                {
+                    "start": max(0, min_func_addr - 0x10000),
+                    "end": max_func_addr + 0x10000,
+                    "name": "inferred",
+                    "size": (max_func_addr - min_func_addr) + 0x20000,
+                }
+            ]
+
         # Prioritize data segments where function tables are likely to be found
         # Skip code segments (.text) and special segments
         # Note: .bss is uninitialized data (zeros) so unlikely to have pointers
-        skip_segments = {'.text', '.pdata', '.xdata', '.rsrc', '.buildid', 'headers', 
-                         '.bss', '.reloc', '.gnu_debuglink', '.comment'}
-        priority_segments = {'.rdata', '.data', '.rodata', '.got', '.got.plt', '.idata'}
-        
+        skip_segments = {
+            ".text",
+            ".pdata",
+            ".xdata",
+            ".rsrc",
+            ".buildid",
+            "headers",
+            ".bss",
+            ".reloc",
+            ".gnu_debuglink",
+            ".comment",
+        }
+        priority_segments = {".rdata", ".data", ".rodata", ".got", ".got.plt", ".idata"}
+
         # Sort segments: priority segments first, then others, skip unwanted
         def segment_priority(seg):
-            name_lower = seg['name'].lower()
+            name_lower = seg["name"].lower()
             if name_lower in skip_segments:
                 return 2  # Skip these
             if name_lower in priority_segments:
                 return 0  # Scan first
             return 1  # Scan after priority
-        
-        scannable_segments = [s for s in data_segments if s['name'].lower() not in skip_segments]
+
+        scannable_segments = [s for s in data_segments if s["name"].lower() not in skip_segments]
         scannable_segments.sort(key=segment_priority)
-        
+
         logger.info(f"Scanning {len(scannable_segments)} segment(s) for function pointer tables (skipping code segments)")
-        
+
         # Step 3: Scan each segment for function pointer sequences
         for segment in scannable_segments:
-            scan_size = min(segment['size'], max_scan_size)
+            scan_size = min(segment["size"], max_scan_size)
             logger.info(f"Scanning segment {segment['name']}: 0x{segment['start']:x} ({segment['size']} bytes)")
             tables_in_segment = self._scan_segment_for_tables(
-                segment['start'],
+                segment["start"],
                 scan_size,
                 function_map,
                 min_func_addr,
                 max_func_addr,
                 pointer_size,
                 min_table_entries,
-                alignment
+                alignment,
             )
             if tables_in_segment:
                 logger.info(f"Found {len(tables_in_segment)} table(s) in segment {segment['name']}")
             results.extend(tables_in_segment)
-        
+
         # Log summary
         if results:
             logger.info(f"Total: Found {len(results)} potential function pointer tables")
         else:
             logger.info(f"No function pointer tables found (require {min_table_entries}+ consecutive pointers)")
             logger.info("Tip: Some binaries (especially C programs) may not have traditional pointer tables")
-        
+
         return results
 
     def _scan_segment_for_tables(
@@ -614,31 +639,27 @@ class AbstractGhidraClient(ABC):
         max_func_addr: int,
         pointer_size: int,
         min_table_entries: int,
-        alignment: int
+        alignment: int,
     ) -> List[Dict]:
         """
         Scan a memory region for function pointer tables.
-        
+
         Returns list of detected tables.
         """
         tables = []
         chunk_size = 4096  # Read 4KB at a time
-        
+
         for offset in range(0, scan_length, chunk_size):
             read_size = min(chunk_size, scan_length - offset)
             current_addr = start_addr + offset
-            
+
             try:
                 # Read raw bytes (base64 encoded)
-                raw_result = self.read_bytes(
-                    hex(current_addr), 
-                    length=read_size, 
-                    format="raw"
-                )
-                
+                raw_result = self.read_bytes(hex(current_addr), length=read_size, format="raw")
+
                 if not raw_result or "Error" in raw_result or "No program" in raw_result:
                     continue
-                
+
                 # Decode base64 to bytes
                 try:
                     data = base64.b64decode(raw_result.strip())
@@ -646,24 +667,17 @@ class AbstractGhidraClient(ABC):
                         continue
                 except Exception:
                     continue
-                
+
                 # Scan for consecutive function pointers
                 tables_in_chunk = self._find_pointer_sequences(
-                    data,
-                    current_addr,
-                    function_map,
-                    min_func_addr,
-                    max_func_addr,
-                    pointer_size,
-                    min_table_entries,
-                    alignment
+                    data, current_addr, function_map, min_func_addr, max_func_addr, pointer_size, min_table_entries, alignment
                 )
                 tables.extend(tables_in_chunk)
-                
+
             except Exception as e:
                 logger.debug(f"Error scanning at 0x{current_addr:x}: {e}")
                 continue
-        
+
         return tables
 
     def _find_pointer_sequences(
@@ -675,100 +689,103 @@ class AbstractGhidraClient(ABC):
         max_func_addr: int,
         pointer_size: int,
         min_table_entries: int,
-        alignment: int
+        alignment: int,
     ) -> List[Dict]:
         """
         Find sequences of consecutive function pointers in a byte array.
         """
         tables = []
-        
+
         # Track current sequence
         current_table_start = None
         current_entries = []
-        
+
         # Format string for struct.unpack (little-endian)
-        ptr_format = '<Q' if pointer_size == 8 else '<I'
-        
+        ptr_format = "<Q" if pointer_size == 8 else "<I"
+
         i = 0
         while i <= len(data) - pointer_size:
             try:
                 # Extract pointer value
-                ptr_bytes = data[i:i + pointer_size]
+                ptr_bytes = data[i : i + pointer_size]
                 ptr_value = struct.unpack(ptr_format, ptr_bytes)[0]
-                
+
                 # Quick range check then lookup
-                is_valid_func = (
-                    min_func_addr <= ptr_value <= max_func_addr and 
-                    ptr_value in function_map
-                )
-                
+                is_valid_func = min_func_addr <= ptr_value <= max_func_addr and ptr_value in function_map
+
                 if is_valid_func:
                     # We found a valid function pointer
                     if current_table_start is None:
                         current_table_start = base_addr + i
-                    
-                    current_entries.append({
-                        'offset': len(current_entries) * pointer_size,
-                        'pointer': f"0x{ptr_value:x}",
-                        'function_name': function_map[ptr_value]
-                    })
+
+                    current_entries.append(
+                        {
+                            "offset": len(current_entries) * pointer_size,
+                            "pointer": f"0x{ptr_value:x}",
+                            "function_name": function_map[ptr_value],
+                        }
+                    )
                     i += alignment
                     continue
-                
+
                 # Not a valid function pointer - check if we should end current sequence
                 if current_entries:
                     if len(current_entries) >= min_table_entries:
-                        tables.append({
-                            'table_address': f"0x{current_table_start:x}",
-                            'entry_count': len(current_entries),
-                            'entries': current_entries.copy()
-                        })
+                        tables.append(
+                            {
+                                "table_address": f"0x{current_table_start:x}",
+                                "entry_count": len(current_entries),
+                                "entries": current_entries.copy(),
+                            }
+                        )
                     current_table_start = None
                     current_entries = []
-                
+
                 i += alignment
-                
+
             except struct.error:
                 i += alignment
                 continue
-        
+
         # Don't forget the last sequence
         if current_entries and len(current_entries) >= min_table_entries:
-            tables.append({
-                'table_address': f"0x{current_table_start:x}",
-                'entry_count': len(current_entries),
-                'entries': current_entries.copy()
-            })
-        
+            tables.append(
+                {
+                    "table_address": f"0x{current_table_start:x}",
+                    "entry_count": len(current_entries),
+                    "entries": current_entries.copy(),
+                }
+            )
+
         return tables
 
     def format_table_scan_results(self, tables: List[Dict], max_entries_shown: int = 10) -> str:
         """
         Format the scan results for human-readable output.
-        
+
         Args:
             tables: List of table dicts from scan_function_pointer_tables
             max_entries_shown: Maximum entries to show per table (default: 10)
-            
+
         Returns:
             Formatted string with table information
         """
         if not tables:
             return "No function pointer tables detected."
-        
+
         lines = [f"Found {len(tables)} function pointer table(s):\n"]
-        
+
         for i, table in enumerate(tables, 1):
             lines.append(f"## Table {i}: {table['table_address']} ({table['entry_count']} entries)")
-            
-            entries_to_show = table['entries'][:max_entries_shown]
+
+            entries_to_show = table["entries"][:max_entries_shown]
             for entry in entries_to_show:
                 lines.append(f"  [{entry['offset']:4d}] {entry['pointer']} -> {entry['function_name']}")
-            
-            if len(table['entries']) > max_entries_shown:
+
+            if len(table["entries"]) > max_entries_shown:
                 lines.append(f"  ... and {len(table['entries']) - max_entries_shown} more entries")
             lines.append("")
-        
+
         return "\n".join(lines)
 
 
@@ -1019,10 +1036,10 @@ class GhidraMCPClient(AbstractGhidraClient):
     def instances_use(self, port: int) -> str:
         """
         Switch the active Ghidra instance to the specified port.
-        
+
         Args:
             port: The port number of the instance to use
-            
+
         Returns:
             Confirmation message
         """
@@ -1034,15 +1051,15 @@ class GhidraMCPClient(AbstractGhidraClient):
         if port not in self.active_instances:
             # Try to discover it first just in case
             self._discover_instances_internal([port])
-            
+
         if port in self.active_instances:
             self.current_instance_port = port
             info = self.active_instances[port]
-            
+
             # Recache info to be sure
             self._update_instance_info(port)
             info = self.active_instances[port]
-            
+
             return f"Switched to Ghidra instance on port {port} analyzing '{info.get('file', 'unknown')}'"
         else:
             return f"Error: No Ghidra instance found on port {port}. Use 'instances_list' to see available instances."
@@ -1050,32 +1067,32 @@ class GhidraMCPClient(AbstractGhidraClient):
     def instances_current(self) -> str:
         """
         Get information about the currently active Ghidra instance.
-        
+
         Returns:
             Instance information
         """
         if not self.current_instance_port or self.current_instance_port not in self.active_instances:
             if not self.active_instances:
-                 return "No active instance selected and no instances found."
+                return "No active instance selected and no instances found."
             # Fallback to first available if none selected but some exist
             default_port = next(iter(self.active_instances))
             self.current_instance_port = default_port
             return f"No instance explicitly selected. Defaulting to port {default_port}.\n" + self.instances_current()
-            
+
         info = self.active_instances[self.current_instance_port]
         result = [
             f"=== Current Instance: Port {self.current_instance_port} ===",
             f"Binary: {info.get('file', 'Unknown')}",
             f"Project: {info.get('project', 'Unknown')}",
             f"URL: {info.get('url')}",
-            f"Plugin Version: {info.get('plugin_version', 'Unknown')}"
+            f"Plugin Version: {info.get('plugin_version', 'Unknown')}",
         ]
         return "\n".join(result)
 
     def get_current_program_info(self) -> Dict[str, str]:
         """
         Get structured information about the currently active program.
-        
+
         Returns:
             Dict containing 'name', 'project', 'port', etc.
         """
@@ -1086,23 +1103,23 @@ class GhidraMCPClient(AbstractGhidraClient):
                 self.current_instance_port = next(iter(self.active_instances))
             else:
                 return {"name": "Unknown Binary", "project": "Unknown", "error": "No active instance"}
-                
+
         # Update info to be fresh
         self._update_instance_info(self.current_instance_port)
-        
+
         info = self.active_instances.get(self.current_instance_port, {})
         return {
             "name": info.get("file", "Unknown Binary"),
             "project": info.get("project", "Unknown Project"),
             "port": str(self.current_instance_port),
             "url": info.get("url", ""),
-            "plugin_version": info.get("plugin_version", "Unknown")
+            "plugin_version": info.get("plugin_version", "Unknown"),
         }
 
     def _discover_instances_internal(self, ports: List[int], host: str = "localhost") -> int:
         """Internal helper to scan ports and update active_instances."""
         count = 0
-        
+
         for port in ports:
             url = f"http://{host}:{port}"
             try:
@@ -1125,7 +1142,7 @@ class GhidraMCPClient(AbstractGhidraClient):
                 url = f"http://localhost:{port}"
 
         info = {"url": url}
-        
+
         try:
             # Get program info
             resp = self.client.get(f"{url}/program", timeout=1.0)

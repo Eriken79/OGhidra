@@ -175,7 +175,6 @@ def cmd_evaluate(args):
 def cmd_report(args):
     """Generate reports from existing results."""
     from benchmark.reports import ReportGenerator
-    from benchmark.runners.benchmark_runner import BenchmarkResults
 
     logger.info(f"Loading results: {args.results}")
 

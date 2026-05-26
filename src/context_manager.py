@@ -953,7 +953,7 @@ class RelevanceRanker:
                     break
 
                 if len(result) > remaining:
-                    result = result[: remaining - 50] + f"\n... [Truncated]"
+                    result = result[: remaining - 50] + "\n... [Truncated]"
 
                 param_str = ", ".join(f'{k}="{v}"' for k, v in params.items())
                 section_lines.append(f"\n### {tool_name}({param_str})")

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 class InteractiveShell:
     """Interactive command line interface for the Ollama-Ghidra Bridge."""
-    
+
     HELP_MESSAGE = """
 Available commands:
   analyze <function>  - Analyze a specific function (e.g., 'analyze main')
@@ -42,7 +42,7 @@ Key Tool Recommendations:
   decompile_function(name="x") - Decompile a specific function by name
   list_functions()             - List all functions in the database
   list_strings()               - List strings that might reveal program functionality
-  
+
 Some less useful tools have been disabled to focus on analysis functionality.
 For a full list of available tools, use the 'tools' command.
 
@@ -52,13 +52,13 @@ Example queries:
   List all strings in the program and explain their significance
   What do the encryption functions in this program do?
     """
-    
+
     def __init__(self, config: BridgeConfig):
         """Initialize the interactive shell with the given configuration."""
         self.config = config
         self.bridge = OllamaGhidraBridge(config)
         self.console = Console()
-        
+
         # Initialize command history
         self.history_file = os.path.expanduser('~/.ollama_ghidra_history')
         try:
@@ -67,7 +67,7 @@ Example queries:
             readline.set_history_length(1000)
         except FileNotFoundError:
             pass
-        
+
         self.show_welcome_message()
 
     def show_welcome_message(self):

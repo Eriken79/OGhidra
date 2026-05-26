@@ -23,7 +23,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import requests
@@ -296,11 +296,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(description="Compare Ollama embedding models for prompt similarity")
     p.add_argument(
         "--session",
-        default=str(
-            Path("analysis_sessions")
-            / "session_1771713926_c8f3fc0f"
-            / "session.json"
-        ),
+        default=str(Path("analysis_sessions") / "session_1771713926_c8f3fc0f" / "session.json"),
         help="Path to session.json",
     )
     p.add_argument(
