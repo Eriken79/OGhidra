@@ -1366,9 +1366,7 @@ class GhidraMCPConfig(BaseModel):
     base_url: AnyHttpUrl = Field(default="http://localhost:8080", env="GHIDRA_BASE_URL")
     timeout: int = Field(ge=1, le=300, default=30, description="Timeout in seconds (1-300)", env="GHIDRA_TIMEOUT")
     mock_mode: bool = Field(default=False, env="GHIDRA_MOCK_MODE")
-    api_path: str = Field(
-        default="", description="API path for GhidraMCP", env="GHIDRA_API_PATH"
-    )
+    api_path: str = Field(default="", description="API path for GhidraMCP", env="GHIDRA_API_PATH")
     # Backend selection: "http" uses the GhidraMCP HTTP server, "pyghidra"
     # uses the in-process pyGhidra integration.
     backend: str = Field(
@@ -1417,9 +1415,7 @@ class GhidraMCPConfig(BaseModel):
         normalized = v.strip().lower()
         valid_backends = {"http", "pyghidra"}
         if normalized not in valid_backends:
-            raise ValueError(
-                f"backend must be one of {sorted(valid_backends)}"
-            )
+            raise ValueError(f"backend must be one of {sorted(valid_backends)}")
         return normalized
 
 
@@ -1758,9 +1754,7 @@ def get_config() -> BridgeConfig:
         if os.getenv("PYGHIDRA_PROJECT_PATH"):
             if "ghidra" not in config_data:
                 config_data["ghidra"] = {}
-            config_data["ghidra"]["pyghidra_project_path"] = os.getenv(
-                "PYGHIDRA_PROJECT_PATH"
-            )
+            config_data["ghidra"]["pyghidra_project_path"] = os.getenv("PYGHIDRA_PROJECT_PATH")
 
         if os.getenv("PYGHIDRA_PROGRAM"):
             if "ghidra" not in config_data:

@@ -1661,8 +1661,8 @@ You can help analyze binary files by executing commands through GhidraMCP."""
 
             next_match = None
             for line in raw_batch:
-                if line.startswith('['):
-                    match = re.search(r'\[Next: offset=(\d+), limit=(\d+)\]', line)
+                if line.startswith("["):
+                    match = re.search(r"\[Next: offset=(\d+), limit=(\d+)\]", line)
                     if match:
                         next_match = (int(match.group(1)), int(match.group(2)))
                     continue
@@ -2618,9 +2618,7 @@ You can help analyze binary files by executing commands through GhidraMCP."""
                         continue  # Skip this command and get a new one
 
                     if rename_count >= 2:  # After 2 rename attempts, provide guidance
-                        logging.warning(
-                            f"Multiple rename_function calls detected. Checking for context mismatch."
-                        )
+                        logging.warning("Multiple rename_function calls detected. Checking for context mismatch.")
                         if getattr(self.config.ghidra, "backend", "http") == "pyghidra":
                             rename_target_guidance = (
                                 "1. Do NOT call get_current_function(); the pyGhidra backend does not track the live Ghidra GUI selection\n"
@@ -2638,7 +2636,7 @@ You can help analyze binary files by executing commands through GhidraMCP."""
 
                         You're trying to rename '{old_name}'. Please verify this is the CURRENT function:
                         {rename_target_guidance}
-                        
+
                         Do NOT rename functions from previous contexts or conversations.
                         """
                         self.add_to_context("system", context_guidance)
@@ -5831,7 +5829,7 @@ Be strict: Only mark as GOAL ACHIEVED if the goal is FULLY and COMPLETELY satisf
                 if isinstance(classes_result, str):
                     data["classes"] = [c.strip() for c in classes_result.split("\n") if c.strip()]
                 else:
-                    data['classes'] = classes_result
+                    data["classes"] = classes_result
             namespaces_result = self._collect_all_paginated_list_results(self.ghidra.list_namespaces)
             if isinstance(namespaces_result, (list, str)) and not str(namespaces_result).startswith("ERROR:"):
                 if isinstance(namespaces_result, str):

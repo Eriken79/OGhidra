@@ -82,11 +82,7 @@ def run_interactive_mode(bridge: Bridge, config: BridgeConfig):
         limit = 200
 
         while True:
-            functions_result = (
-                bridge.ghidra.list_functions(offset=offset, limit=limit)
-                if hasattr(bridge, "ghidra")
-                else []
-            )
+            functions_result = bridge.ghidra.list_functions(offset=offset, limit=limit) if hasattr(bridge, "ghidra") else []
 
             batch, status = _normalize_function_lines(functions_result)
             if isinstance(status, str):
@@ -1294,12 +1290,8 @@ def main():
     config = get_config()
 
     parser = argparse.ArgumentParser(description="Ollama-GhidraMCP Bridge")
-    parser.add_argument(
-        "--interactive", "-i", action="store_true", help="Enable interactive mode"
-    )
-    parser.add_argument(
-        "--query", "-q", type=str, help="Single query to execute (non-interactive mode)"
-    )
+    parser.add_argument("--interactive", "-i", action="store_true", help="Enable interactive mode")
+    parser.add_argument("--query", "-q", type=str, help="Single query to execute (non-interactive mode)")
     # UI now defaults to ON when no other mode flags are passed
     parser.add_argument(
         "--ui",

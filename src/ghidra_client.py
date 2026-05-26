@@ -47,9 +47,7 @@ class AbstractGhidraClient(ABC):
         """List available Ghidra instances/programs for this backend."""
 
     @abstractmethod
-    def instances_discover(
-        self, host: str = "localhost", start_port: int = 8192, end_port: int = 8200
-    ) -> str:
+    def instances_discover(self, host: str = "localhost", start_port: int = 8192, end_port: int = 8200) -> str:
         """Discover available instances/programs for this backend."""
 
     @abstractmethod
@@ -95,18 +93,12 @@ class AbstractGhidraClient(ABC):
         logger.warning(f"Invalid {param_name} type={type(value).__name__}; using default={default}")
         return default
 
-    def _get_offset_limit(
-        self, offset: Any, limit: Any, *, default_limit: int = 100
-    ) -> Tuple[int, int]:
+    def _get_offset_limit(self, offset: Any, limit: Any, *, default_limit: int = 100) -> Tuple[int, int]:
         """Parse non-negative offset/limit pairs consistently across backends."""
-        parsed_offset = max(
-            0, self._coerce_int_param(offset, param_name="offset", default=0)
-        )
+        parsed_offset = max(0, self._coerce_int_param(offset, param_name="offset", default=0))
         parsed_limit = max(
             0,
-            self._coerce_int_param(
-                limit, param_name="limit", default=default_limit
-            ),
+            self._coerce_int_param(limit, param_name="limit", default=default_limit),
         )
         return parsed_offset, parsed_limit
 
@@ -117,18 +109,14 @@ class AbstractGhidraClient(ABC):
             return []
         return lines[offset : offset + limit]
 
-    def _render_paginated_lines(
-        self, lines: List[str], offset: int, limit: int
-    ) -> List[str]:
+    def _render_paginated_lines(self, lines: List[str], offset: int, limit: int) -> List[str]:
         """Render list pagination metadata in the same shape as the HTTP plugin."""
         total = len(lines)
         start = max(0, offset)
         end = min(total, offset + limit)
 
         if start >= total:
-            return [
-                f"[Total: {total}] [Showing: 0 items - offset {offset} exceeds total]"
-            ]
+            return [f"[Total: {total}] [Showing: 0 items - offset {offset} exceeds total]"]
 
         header = f"[Total: {total}] [Showing: {start + 1}-{end}]"
         if end < total:
@@ -148,10 +136,7 @@ class AbstractGhidraClient(ABC):
         end = min(total, offset + limit)
 
         if start >= total:
-            return (
-                f"[Total Lines: {total}] "
-                f"[Showing: 0 lines - offset {offset} exceeds total]"
-            )
+            return f"[Total Lines: {total}] [Showing: 0 lines - offset {offset} exceeds total]"
 
         parts = [f"[Total Lines: {total}] [Showing Lines: {start + 1}-{end}]"]
         parts.extend(lines[start:end])
@@ -186,9 +171,7 @@ class AbstractGhidraClient(ABC):
         if not identifier:
             return ""
 
-        if identifier.isalnum() and all(
-            c in "0123456789abcdefABCDEF" for c in identifier
-        ):
+        if identifier.isalnum() and all(c in "0123456789abcdefABCDEF" for c in identifier):
             return identifier.lower()
 
         if identifier.lower().startswith("0x"):
@@ -241,21 +224,15 @@ class AbstractGhidraClient(ABC):
         """List defined data labels and their values with pagination."""
 
     @abstractmethod
-    def list_strings(
-        self, offset: int = 0, limit: int = 100, filter: str | None = None
-    ) -> List[str]:
+    def list_strings(self, offset: int = 0, limit: int = 100, filter: str | None = None) -> List[str]:
         """List defined strings or search them by substring."""
 
     @abstractmethod
-    def search_functions_by_name(
-        self, query: str, offset: int = 0, limit: int = 100
-    ) -> List[str]:
+    def search_functions_by_name(self, query: str, offset: int = 0, limit: int = 100) -> List[str]:
         """Search for functions whose name contains the given substring."""
 
     @abstractmethod
-    def rename_variable(
-        self, function_name: str, old_name: str, new_name: str
-    ) -> str:
+    def rename_variable(self, function_name: str, old_name: str, new_name: str) -> str:
         """Rename a local variable within a function."""
 
     @abstractmethod
@@ -275,9 +252,7 @@ class AbstractGhidraClient(ABC):
         """List all functions in the database with pagination."""
 
     @abstractmethod
-    def decompile_function_by_address(
-        self, address: str, offset: int = 0, limit: int = 500
-    ) -> str:
+    def decompile_function_by_address(self, address: str, offset: int = 0, limit: int = 500) -> str:
         """Decompile a function by address and return the decompiled C code."""
 
     @abstractmethod
@@ -301,9 +276,7 @@ class AbstractGhidraClient(ABC):
         """Set a function prototype."""
 
     @abstractmethod
-    def set_local_variable_type(
-        self, function_address: str, variable_name: str, new_type: str
-    ) -> str:
+    def set_local_variable_type(self, function_address: str, variable_name: str, new_type: str) -> str:
         """Set a local variable type."""
 
     @abstractmethod
@@ -321,7 +294,6 @@ class AbstractGhidraClient(ABC):
     @abstractmethod
     def read_bytes(self, address: str, length: int = 16, format: str = "hex") -> str:
         """Read raw bytes from memory."""
-
 
     def analyze_function(self, address: str = None) -> str:
         """
@@ -469,9 +441,7 @@ class AbstractGhidraClient(ABC):
                         result.append("...")
                         result.append("")
                 except Exception as e:
-                    logger.debug(
-                        f"Could not decompile referenced function {func_name}: {e}"
-                    )
+                    logger.debug(f"Could not decompile referenced function {func_name}: {e}")
 
         return "\n".join(result)
 
@@ -815,9 +785,7 @@ class GhidraMCPClient(AbstractGhidraClient):
                 self.default_port = parsed.port
                 # We'll set this as active initially, but verify it later
                 self.current_instance_port = self.default_port
-                self.active_instances[self.default_port] = {
-                    "url": str(config.base_url).rstrip("/")
-                }
+                self.active_instances[self.default_port] = {"url": str(config.base_url).rstrip("/")}
             else:
                 self.default_port = 8080
                 self.current_instance_port = 8080
@@ -849,13 +817,7 @@ class GhidraMCPClient(AbstractGhidraClient):
             if (
                 response
                 and isinstance(response, list)
-                and not (
-                    response
-                    and (
-                        response[0].startswith("Error")
-                        or response[0].startswith("Request failed")
-                    )
-                )
+                and not (response and (response[0].startswith("Error") or response[0].startswith("Request failed")))
             ):
                 logger.info("Successfully connected to GhidraMCP API")
                 # Update info for current instance
@@ -868,10 +830,7 @@ class GhidraMCPClient(AbstractGhidraClient):
 
     def _get_base_url(self) -> str:
         """Get the base URL for the current active instance."""
-        if (
-            self.current_instance_port
-            and self.current_instance_port in self.active_instances
-        ):
+        if self.current_instance_port and self.current_instance_port in self.active_instances:
             return self.active_instances[self.current_instance_port]["url"]
         return str(self.config.base_url).rstrip("/")
 
@@ -894,9 +853,7 @@ class GhidraMCPClient(AbstractGhidraClient):
         try:
             with self._request_lock:
                 if method.upper() == "GET":
-                    response = self.client.get(
-                        url, params=params, timeout=self.config.timeout
-                    )
+                    response = self.client.get(url, params=params, timeout=self.config.timeout)
                 elif isinstance(data, dict):
                     response = self.client.post(
                         url,
@@ -905,9 +862,7 @@ class GhidraMCPClient(AbstractGhidraClient):
                         timeout=self.config.timeout,
                     )
                 elif data is None:
-                    response = self.client.post(
-                        url, params=params, timeout=self.config.timeout
-                    )
+                    response = self.client.post(url, params=params, timeout=self.config.timeout)
                 else:
                     response = self.client.post(
                         url,
@@ -925,9 +880,7 @@ class GhidraMCPClient(AbstractGhidraClient):
             return response.text if method.upper() == "GET" else response.text.strip()
         return f"Error {response.status_code}: {response.text.strip()}"
 
-    def _http_get_lines(
-        self, endpoint: str, params: Dict[str, Any] | None = None
-    ) -> List[str]:
+    def _http_get_lines(self, endpoint: str, params: Dict[str, Any] | None = None) -> List[str]:
         """GET an endpoint and return split text lines."""
         text = self._http_request_text("GET", endpoint, params=params)
         return text.splitlines()
@@ -951,9 +904,7 @@ class GhidraMCPClient(AbstractGhidraClient):
         """
         try:
             response = self._http_get_lines("methods", {"offset": 0, "limit": 1})
-            return bool(response) and not response[0].startswith(
-                ("Error", "Request failed")
-            )
+            return bool(response) and not response[0].startswith(("Error", "Request failed"))
         except Exception as e:
             logger.error(f"GhidraMCP server health check failed: {str(e)}")
             return False
@@ -967,9 +918,7 @@ class GhidraMCPClient(AbstractGhidraClient):
         """
         try:
             response = self._http_get_lines("methods", {"offset": 0, "limit": 1})
-            return bool(response) and not response[0].startswith(
-                ("Error", "Request failed")
-            )
+            return bool(response) and not response[0].startswith(("Error", "Request failed"))
         except Exception as e:
             logger.error(f"GhidraMCP health check failed: {str(e)}")
             return False
@@ -1011,9 +960,7 @@ class GhidraMCPClient(AbstractGhidraClient):
         result.append("\nUse 'instances_use(port=...)' to switch between instances.")
         return "\n".join(result)
 
-    def instances_discover(
-        self, host: str = "localhost", start_port: int = 8192, end_port: int = 8200
-    ) -> str:
+    def instances_discover(self, host: str = "localhost", start_port: int = 8192, end_port: int = 8200) -> str:
         """
         Discover Ghidra instances on a specific host and port range.
 
@@ -1163,9 +1110,7 @@ class GhidraMCPClient(AbstractGhidraClient):
                 if ver_resp.status_code == 200:
                     ver_data = ver_resp.json()
                     if "result" in ver_data and isinstance(ver_data["result"], dict):
-                        info["plugin_version"] = ver_data["result"].get(
-                            "plugin_version", "unknown"
-                        )
+                        info["plugin_version"] = ver_data["result"].get("plugin_version", "unknown")
         except Exception:
             pass
 
@@ -1192,14 +1137,10 @@ class GhidraMCPClient(AbstractGhidraClient):
         )
 
     def rename_function(self, old_name: str, new_name: str) -> str:
-        return self._http_post_text(
-            "renameFunction", {"oldName": old_name, "newName": new_name}
-        )
+        return self._http_post_text("renameFunction", {"oldName": old_name, "newName": new_name})
 
     def rename_data(self, address: str, new_name: str) -> str:
-        return self._http_post_text(
-            "renameData", {"address": address, "newName": new_name}
-        )
+        return self._http_post_text("renameData", {"address": address, "newName": new_name})
 
     def list_segments(self, offset: int = 0, limit: int = 100) -> List[str]:
         offset, limit = self._get_offset_limit(offset, limit)
@@ -1257,23 +1198,15 @@ class GhidraMCPClient(AbstractGhidraClient):
             limit = self.MAX_SAFE_LIMIT
         return self._http_get_lines("data", {"offset": offset, "limit": limit})
 
-    def list_strings(
-        self, offset: int = 0, limit: int = 100, filter: str | None = None
-    ) -> List[str]:
+    def list_strings(self, offset: int = 0, limit: int = 100, filter: str | None = None) -> List[str]:
         offset = self._coerce_int_param(offset, param_name="offset", default=0)
         limit = self._coerce_int_param(limit, param_name="limit", default=100)
 
         max_limit = 50 if filter else self.MAX_SAFE_LIMIT
         if limit > max_limit:
             logger.warning(
-                self.LIMIT_WARNING_TEMPLATE.format(
-                    method="list_strings", limit=limit, max_safe=max_limit
-                )
-                + (
-                    " Consider using 'filter' parameter for targeted searches."
-                    if not filter
-                    else ""
-                )
+                self.LIMIT_WARNING_TEMPLATE.format(method="list_strings", limit=limit, max_safe=max_limit)
+                + (" Consider using 'filter' parameter for targeted searches." if not filter else "")
             )
             limit = max_limit
 
@@ -1282,9 +1215,7 @@ class GhidraMCPClient(AbstractGhidraClient):
             params["filter"] = filter
         return self._http_get_lines("strings", params)
 
-    def search_functions_by_name(
-        self, query: str, offset: int = 0, limit: int = 100
-    ) -> List[str]:
+    def search_functions_by_name(self, query: str, offset: int = 0, limit: int = 100) -> List[str]:
         if not query:
             return ["Error: query string is required"]
         offset, limit = self._get_offset_limit(offset, limit)
@@ -1293,18 +1224,14 @@ class GhidraMCPClient(AbstractGhidraClient):
             {"query": query, "offset": offset, "limit": limit},
         )
 
-    def rename_variable(
-        self, function_name: str, old_name: str, new_name: str
-    ) -> str:
+    def rename_variable(self, function_name: str, old_name: str, new_name: str) -> str:
         return self._http_post_text(
             "renameVariable",
             {"functionName": function_name, "oldName": old_name, "newName": new_name},
         )
 
     def get_function_by_address(self, address: str) -> str:
-        return "\n".join(
-            self._http_get_lines("get_function_by_address", {"address": address})
-        )
+        return "\n".join(self._http_get_lines("get_function_by_address", {"address": address}))
 
     def get_current_address(self) -> str:
         return "\n".join(self._http_get_lines("get_current_address"))
@@ -1317,20 +1244,15 @@ class GhidraMCPClient(AbstractGhidraClient):
         max_functions_limit = 10000
         if limit > max_functions_limit:
             logger.warning(
-                "list_functions limit %s exceeds MAX_FUNCTIONS_LIMIT=%s. "
-                "Capping to MAX_FUNCTIONS_LIMIT.",
+                "list_functions limit %s exceeds MAX_FUNCTIONS_LIMIT=%s. Capping to MAX_FUNCTIONS_LIMIT.",
                 limit,
                 max_functions_limit,
             )
             limit = max_functions_limit
 
-        return self._http_get_lines(
-            "list_functions", {"offset": offset, "limit": limit}
-        )
+        return self._http_get_lines("list_functions", {"offset": offset, "limit": limit})
 
-    def decompile_function_by_address(
-        self, address: str, offset: int = 0, limit: int = 500
-    ) -> str:
+    def decompile_function_by_address(self, address: str, offset: int = 0, limit: int = 500) -> str:
         offset, limit = self._get_offset_limit(offset, limit, default_limit=500)
         return "\n".join(
             self._http_get_lines(
@@ -1343,14 +1265,10 @@ class GhidraMCPClient(AbstractGhidraClient):
         return self._http_get_lines("disassemble_function", {"address": address})
 
     def set_decompiler_comment(self, address: str, comment: str) -> str:
-        return self._http_post_text(
-            "set_decompiler_comment", {"address": address, "comment": comment}
-        )
+        return self._http_post_text("set_decompiler_comment", {"address": address, "comment": comment})
 
     def set_disassembly_comment(self, address: str, comment: str) -> str:
-        return self._http_post_text(
-            "set_disassembly_comment", {"address": address, "comment": comment}
-        )
+        return self._http_post_text("set_disassembly_comment", {"address": address, "comment": comment})
 
     def rename_function_by_address(self, function_address: str, new_name: str) -> str:
         return self._http_post_text(
@@ -1364,9 +1282,7 @@ class GhidraMCPClient(AbstractGhidraClient):
             {"function_address": function_address, "prototype": prototype},
         )
 
-    def set_local_variable_type(
-        self, function_address: str, variable_name: str, new_type: str
-    ) -> str:
+    def set_local_variable_type(self, function_address: str, variable_name: str, new_type: str) -> str:
         return self._http_post_text(
             "set_local_variable_type",
             {
@@ -1379,30 +1295,19 @@ class GhidraMCPClient(AbstractGhidraClient):
     def get_xrefs_to(self, address: str, offset: int = 0, limit: int = 100):
         offset, limit = self._get_offset_limit(offset, limit)
         norm_addr = self._normalize_addr(address)
-        return self._http_get_lines(
-            "xrefs_to", {"address": norm_addr, "offset": offset, "limit": limit}
-        )
+        return self._http_get_lines("xrefs_to", {"address": norm_addr, "offset": offset, "limit": limit})
 
     def get_xrefs_from(self, address: str, offset: int = 0, limit: int = 100):
         offset, limit = self._get_offset_limit(offset, limit)
         norm_addr = self._normalize_addr(address)
-        return self._http_get_lines(
-            "xrefs_from", {"address": norm_addr, "offset": offset, "limit": limit}
-        )
+        return self._http_get_lines("xrefs_from", {"address": norm_addr, "offset": offset, "limit": limit})
 
     def get_function_xrefs(self, name: str, offset: int = 0, limit: int = 100):
-        if (
-            name.upper().startswith("0X")
-            or name[:3].upper() == "FUN"
-            or name.isalnum()
-            and len(name) >= 6
-        ):
+        if name.upper().startswith("0X") or name[:3].upper() == "FUN" or name.isalnum() and len(name) >= 6:
             return self.get_xrefs_to(name, offset=offset, limit=limit)
 
         offset, limit = self._get_offset_limit(offset, limit)
-        return self._http_get_lines(
-            "function_xrefs", {"name": name, "offset": offset, "limit": limit}
-        )
+        return self._http_get_lines("function_xrefs", {"name": name, "offset": offset, "limit": limit})
 
     def read_bytes(self, address: str, length: int = 16, format: str = "hex") -> str:
         norm_addr = self._normalize_addr(address)
@@ -1466,10 +1371,7 @@ class PyGhidraClient(AbstractGhidraClient):
                     self._decomp = None
 
             # Release program if acquired via consume_program
-            if (
-                getattr(self, "_program_consumer", None) is not None
-                and self._program is not None
-            ):
+            if getattr(self, "_program_consumer", None) is not None and self._program is not None:
                 try:
                     self._program.release(self._program_consumer)
                 except Exception:
@@ -1576,9 +1478,7 @@ class PyGhidraClient(AbstractGhidraClient):
                 else:
                     start_fn()
         except Exception as exc:
-            raise RuntimeError(
-                f"Failed to start pyGhidra with GHIDRA_INSTALL_DIR={install_dir!r}: {exc}"
-            ) from exc
+            raise RuntimeError(f"Failed to start pyGhidra with GHIDRA_INSTALL_DIR={install_dir!r}: {exc}") from exc
 
         # Don't import 'ghidra' here. pyGhidra is responsible for starting the
         # JVM and setting up the classpath when we open a project/program. The
@@ -1616,9 +1516,7 @@ class PyGhidraClient(AbstractGhidraClient):
 
             bpath = Path(binary_path)
             if not bpath.is_file():
-                raise RuntimeError(
-                    f"PyGhidraClient: pyghidra_binary '{binary_path}' does not exist or is not a file."
-                )
+                raise RuntimeError(f"PyGhidraClient: pyghidra_binary '{binary_path}' does not exist or is not a file.")
 
             # Determine base directory for pyGhidra projects
             projects_dir_cfg = getattr(self.config, "pyghidra_projects_dir", None)
@@ -1630,9 +1528,7 @@ class PyGhidraClient(AbstractGhidraClient):
             try:
                 projects_dir.mkdir(parents=True, exist_ok=True)
             except Exception as exc:
-                raise RuntimeError(
-                    f"Failed to create pyGhidra projects directory '{projects_dir}': {exc}"
-                ) from exc
+                raise RuntimeError(f"Failed to create pyGhidra projects directory '{projects_dir}': {exc}") from exc
 
             project_location = str(projects_dir)
             project_name = bpath.name  # e.g. "vivado.exe"
@@ -1729,9 +1625,7 @@ class PyGhidraClient(AbstractGhidraClient):
                 def _collect(df, prog):
                     try:
                         name = df.getName()
-                        path = (
-                            df.getPathname()
-                        )  # e.g. "/MyProgram" or "/folder/MyProgram"
+                        path = df.getPathname()  # e.g. "/MyProgram" or "/folder/MyProgram"
                         discovered.append((str(name), str(path)))
                     except Exception:
                         return
@@ -1786,8 +1680,7 @@ class PyGhidraClient(AbstractGhidraClient):
                 if selected_path is None:
                     pretty = ", ".join(f"{n} ({p})" for n, p in discovered) or "<none>"
                     raise RuntimeError(
-                        f"PyGhidra could not find program named '{target_program}' in project. "
-                        f"Available programs: {pretty}"
+                        f"PyGhidra could not find program named '{target_program}' in project. Available programs: {pretty}"
                     )
         else:
             # No explicit program name: attempt auto-selection when exactly
@@ -1818,9 +1711,7 @@ class PyGhidraClient(AbstractGhidraClient):
         # pyghidra.consume_program() so the Program remains valid for the
         # lifetime of this client.
         if not selected_path:
-            raise RuntimeError(
-                "Internal error: no program path selected for pyGhidra backend."
-            )
+            raise RuntimeError("Internal error: no program path selected for pyGhidra backend.")
 
         try:
             if callable(consume_program):
@@ -1896,18 +1787,13 @@ class PyGhidraClient(AbstractGhidraClient):
         """Return the single in-process pyGhidra instance description."""
         return self.instances_current()
 
-    def instances_discover(
-        self, host: str = "localhost", start_port: int = 8192, end_port: int = 8200
-    ) -> str:
+    def instances_discover(self, host: str = "localhost", start_port: int = 8192, end_port: int = 8200) -> str:
         """pyGhidra runs in-process and does not support HTTP instance discovery."""
         return self.instances_current()
 
     def instances_use(self, port: int) -> str:
         """pyGhidra exposes a single in-process program rather than MCP instances."""
-        return (
-            "Error: pyGhidra backend does not support switching between HTTP "
-            f"instances (requested port {port})."
-        )
+        return f"Error: pyGhidra backend does not support switching between HTTP instances (requested port {port})."
 
     def instances_current(self) -> str:
         """Describe the single active pyGhidra program."""
@@ -2068,9 +1954,7 @@ class PyGhidraClient(AbstractGhidraClient):
             from ghidra.app.decompiler import DecompInterface  # type: ignore[import]
             from ghidra.util.task import ConsoleTaskMonitor  # type: ignore[import]
         except ImportError as exc:  # pragma: no cover - environment-specific
-            raise RuntimeError(
-                "Ghidra decompiler classes not available in pyGhidra environment"
-            ) from exc
+            raise RuntimeError("Ghidra decompiler classes not available in pyGhidra environment") from exc
 
         decomp = DecompInterface()
         decomp.openProgram(program)
@@ -2098,9 +1982,7 @@ class PyGhidraClient(AbstractGhidraClient):
 
         action()
 
-    def _list_function_lines(
-        self, *, offset: int, limit: int, include_addresses: bool
-    ) -> List[str]:
+    def _list_function_lines(self, *, offset: int, limit: int, include_addresses: bool) -> List[str]:
         program = self._require_program()
         func_mgr = program.getFunctionManager()
         funcs_iter = func_mgr.getFunctions(True)
@@ -2120,9 +2002,7 @@ class PyGhidraClient(AbstractGhidraClient):
 
         return self._render_paginated_lines(lines, offset, limit)
 
-    def _warn_slow_string_path(
-        self, message: str, exc: Exception | None = None
-    ) -> None:
+    def _warn_slow_string_path(self, message: str, exc: Exception | None = None) -> None:
         """Emit a one-time error when list_strings() must use the slow path."""
         if getattr(self, "_defined_string_iterator_warning_emitted", False):
             return
@@ -2197,9 +2077,7 @@ class PyGhidraClient(AbstractGhidraClient):
     def list_methods(self, offset: int = 0, limit: int = 100) -> List[str]:
         try:
             offset, limit = self._get_offset_limit(offset, limit)
-            return self._list_function_lines(
-                offset=offset, limit=limit, include_addresses=False
-            )
+            return self._list_function_lines(offset=offset, limit=limit, include_addresses=False)
         except Exception as exc:
             return self._operation_error_lines("list_methods", exc)
 
@@ -2208,9 +2086,7 @@ class PyGhidraClient(AbstractGhidraClient):
 
     def decompile_function(self, name: str, offset: int = 0, limit: int = 500) -> str:
         try:
-            offset, limit = self._get_offset_limit(
-                offset, limit, default_limit=500
-            )
+            offset, limit = self._get_offset_limit(offset, limit, default_limit=500)
             func = self._find_function_by_name(name)
             if func is None:
                 return f"Error: function '{name}' not found"
@@ -2248,9 +2124,7 @@ class PyGhidraClient(AbstractGhidraClient):
                 return f"Error: function '{old_name}' not found"
 
             desc = f"rename_function: {old_name} -> {new_name}"
-            self._run_program_transaction(
-                desc, lambda: target_func.setName(new_name, SourceType.USER_DEFINED)
-            )
+            self._run_program_transaction(desc, lambda: target_func.setName(new_name, SourceType.USER_DEFINED))
             return f"Renamed function '{old_name}' to '{new_name}'"
         except Exception as exc:
             return self._operation_error("renameFunction", exc)
@@ -2335,11 +2209,7 @@ class PyGhidraClient(AbstractGhidraClient):
                         if ref_count <= 5:
                             from_addr = ref.getFromAddress()
                             caller = func_mgr.getFunctionContaining(from_addr)
-                            callers.append(
-                                str(caller.getName())
-                                if caller is not None
-                                else str(from_addr)
-                            )
+                            callers.append(str(caller.getName()) if caller is not None else str(from_addr))
 
                     if ref_count > 0:
                         line += f" [Refs: {ref_count}]"
@@ -2374,10 +2244,7 @@ class PyGhidraClient(AbstractGhidraClient):
             lines: List[str] = []
             for sym in st.getAllSymbols(True):
                 try:
-                    if (
-                        hasattr(sym, "isExternalEntryPoint")
-                        and sym.isExternalEntryPoint()
-                    ):
+                    if hasattr(sym, "isExternalEntryPoint") and sym.isExternalEntryPoint():
                         lines.append(f"{sym.getName()} -> {sym.getAddress()}")
                 except Exception:
                     continue
@@ -2437,32 +2304,22 @@ class PyGhidraClient(AbstractGhidraClient):
                         if hasattr(data, "getDefaultValueRepresentation")
                         else str(data.getValue())
                     )
-                    lines.append(
-                        f"{data.getAddress()}: {label or '(unnamed)'} = {value_repr}"
-                    )
+                    lines.append(f"{data.getAddress()}: {label or '(unnamed)'} = {value_repr}")
                 except Exception:
                     continue
             return self._render_paginated_lines(lines, offset, limit)
         except Exception as exc:
             return self._operation_error_lines("list_data_items", exc)
-    
-    def list_strings(
-        self, offset: int = 0, limit: int = 100, filter: str | None = None
-    ) -> List[str]:
+
+    def list_strings(self, offset: int = 0, limit: int = 100, filter: str | None = None) -> List[str]:
         offset = self._coerce_int_param(offset, param_name="offset", default=0)
         limit = self._coerce_int_param(limit, param_name="limit", default=100)
 
         max_limit = 50 if filter else self.MAX_SAFE_LIMIT
         if limit > max_limit:
             logger.warning(
-                self.LIMIT_WARNING_TEMPLATE.format(
-                    method="list_strings", limit=limit, max_safe=max_limit
-                )
-                + (
-                    " Consider using 'filter' parameter for targeted searches."
-                    if not filter
-                    else ""
-                )
+                self.LIMIT_WARNING_TEMPLATE.format(method="list_strings", limit=limit, max_safe=max_limit)
+                + (" Consider using 'filter' parameter for targeted searches." if not filter else "")
             )
             limit = max_limit
 
@@ -2489,9 +2346,7 @@ class PyGhidraClient(AbstractGhidraClient):
         except Exception as exc:
             return self._operation_error_lines("list_strings", exc)
 
-    def search_functions_by_name(
-        self, query: str, offset: int = 0, limit: int = 100
-    ) -> List[str]:
+    def search_functions_by_name(self, query: str, offset: int = 0, limit: int = 100) -> List[str]:
         if not query:
             return ["Error: query string is required"]
 
@@ -2513,14 +2368,9 @@ class PyGhidraClient(AbstractGhidraClient):
         except Exception as exc:
             return self._operation_error_lines("search_functions", exc)
 
-    def rename_variable(
-        self, function_name: str, old_name: str, new_name: str
-    ) -> str:
+    def rename_variable(self, function_name: str, old_name: str, new_name: str) -> str:
         if not function_name or not old_name or not new_name:
-            return (
-                "Error: 'functionName', 'oldName', and 'newName' are required "
-                "for renameVariable"
-            )
+            return "Error: 'functionName', 'oldName', and 'newName' are required for renameVariable"
 
         try:
             from ghidra.program.model.symbol import SourceType  # type: ignore[import]
@@ -2544,19 +2394,11 @@ class PyGhidraClient(AbstractGhidraClient):
                     continue
 
             if target is None:
-                return (
-                    f"Error: variable '{old_name}' not found in function "
-                    f"'{function_name}'"
-                )
+                return f"Error: variable '{old_name}' not found in function '{function_name}'"
 
             desc = f"rename_variable: {function_name}.{old_name} -> {new_name}"
-            self._run_program_transaction(
-                desc, lambda: target.setName(new_name, SourceType.USER_DEFINED)
-            )
-            return (
-                f"Renamed variable '{old_name}' to '{new_name}' in function "
-                f"'{function_name}'"
-            )
+            self._run_program_transaction(desc, lambda: target.setName(new_name, SourceType.USER_DEFINED))
+            return f"Renamed variable '{old_name}' to '{new_name}' in function '{function_name}'"
         except Exception as exc:
             return self._operation_error("renameVariable", exc)
 
@@ -2608,22 +2450,16 @@ class PyGhidraClient(AbstractGhidraClient):
                 )
                 limit = max_functions_limit
 
-            return self._list_function_lines(
-                offset=offset, limit=limit, include_addresses=True
-            )
+            return self._list_function_lines(offset=offset, limit=limit, include_addresses=True)
         except Exception as exc:
             return self._operation_error_lines("list_functions", exc)
 
-    def decompile_function_by_address(
-        self, address: str, offset: int = 0, limit: int = 500
-    ) -> str:
+    def decompile_function_by_address(self, address: str, offset: int = 0, limit: int = 500) -> str:
         if not address:
             return "Error: 'address' parameter is required for decompile_function"
 
         try:
-            offset, limit = self._get_offset_limit(
-                offset, limit, default_limit=500
-            )
+            offset, limit = self._get_offset_limit(offset, limit, default_limit=500)
             addr = self._address_from_hex(str(address))
             func = self._get_function_for_address(addr)
             if func is None:
@@ -2666,10 +2502,7 @@ class PyGhidraClient(AbstractGhidraClient):
 
     def set_decompiler_comment(self, address: str, comment: str) -> str:
         if not address or comment is None:
-            return (
-                "Error: 'address' and 'comment' are required for "
-                "set_decompiler_comment"
-            )
+            return "Error: 'address' and 'comment' are required for set_decompiler_comment"
 
         try:
             from ghidra.program.model.listing import CodeUnit  # type: ignore[import]
@@ -2682,19 +2515,14 @@ class PyGhidraClient(AbstractGhidraClient):
                 return f"Error: No code unit at address {address}"
 
             desc = f"set_decompiler_comment at {address}"
-            self._run_program_transaction(
-                desc, lambda: code_unit.setComment(CodeUnit.PRE_COMMENT, comment)
-            )
+            self._run_program_transaction(desc, lambda: code_unit.setComment(CodeUnit.PRE_COMMENT, comment))
             return f"Set decompiler comment at {address}"
         except Exception as exc:
             return self._operation_error("set_decompiler_comment", exc)
 
     def set_disassembly_comment(self, address: str, comment: str) -> str:
         if not address or comment is None:
-            return (
-                "Error: 'address' and 'comment' are required for "
-                "set_disassembly_comment"
-            )
+            return "Error: 'address' and 'comment' are required for set_disassembly_comment"
 
         try:
             from ghidra.program.model.listing import CodeUnit  # type: ignore[import]
@@ -2707,19 +2535,14 @@ class PyGhidraClient(AbstractGhidraClient):
                 return f"Error: No code unit at address {address}"
 
             desc = f"set_disassembly_comment at {address}"
-            self._run_program_transaction(
-                desc, lambda: code_unit.setComment(CodeUnit.EOL_COMMENT, comment)
-            )
+            self._run_program_transaction(desc, lambda: code_unit.setComment(CodeUnit.EOL_COMMENT, comment))
             return f"Set disassembly comment at {address}"
         except Exception as exc:
             return self._operation_error("set_disassembly_comment", exc)
 
     def rename_function_by_address(self, function_address: str, new_name: str) -> str:
         if not function_address or not new_name:
-            return (
-                "Error: 'function_address' and 'new_name' are required for "
-                "rename_function_by_address"
-            )
+            return "Error: 'function_address' and 'new_name' are required for rename_function_by_address"
 
         try:
             from ghidra.program.model.symbol import SourceType  # type: ignore[import]
@@ -2727,55 +2550,39 @@ class PyGhidraClient(AbstractGhidraClient):
             addr = self._address_from_hex(str(function_address))
             func = self._get_function_for_address(addr)
             if func is None:
-                return (
-                    "Error: No function found at or containing address "
-                    f"{function_address}"
-                )
+                return f"Error: No function found at or containing address {function_address}"
 
             desc = f"rename_function_by_address: {function_address} -> {new_name}"
-            self._run_program_transaction(
-                desc, lambda: func.setName(new_name, SourceType.USER_DEFINED)
-            )
+            self._run_program_transaction(desc, lambda: func.setName(new_name, SourceType.USER_DEFINED))
             return f"Renamed function at {function_address} to '{new_name}'"
         except Exception as exc:
             return self._operation_error("rename_function_by_address", exc)
 
     def set_function_prototype(self, function_address: str, prototype: str) -> str:
         if not function_address or not prototype:
-            return (
-                "Error: 'function_address' and 'prototype' are required for "
-                "set_function_prototype"
-            )
+            return "Error: 'function_address' and 'prototype' are required for set_function_prototype"
 
         try:
             program = self._require_program()
             addr = self._address_from_hex(str(function_address))
             func = self._get_function_for_address(addr)
             if func is None:
-                return (
-                    "Error: No function found at or containing address "
-                    f"{function_address}"
-                )
+                return f"Error: No function found at or containing address {function_address}"
 
             desc = f"set_function_prototype at {function_address}"
             tx = getattr(self._pyghidra, "transaction", None)
 
             if hasattr(func, "setPrototypeString") and callable(tx):
                 self._run_program_transaction(
-                    desc, lambda: func.setPrototypeString(prototype)  # type: ignore[call-arg]
+                    desc,
+                    lambda: func.setPrototypeString(prototype),  # type: ignore[call-arg]
                 )
-                return (
-                    f"Set prototype for function at {function_address} to "
-                    f"'{prototype}'"
-                )
+                return f"Set prototype for function at {function_address} to '{prototype}'"
 
             try:
                 from ghidra.app.util.cparser.C import CParser  # type: ignore[import]
             except ImportError:
-                return (
-                    "Error: CParser not available to set function prototype; "
-                    "consider upgrading Ghidra/pyGhidra."
-                )
+                return "Error: CParser not available to set function prototype; consider upgrading Ghidra/pyGhidra."
 
             from ghidra.program.model.symbol import SourceType  # type: ignore[import]
 
@@ -2790,23 +2597,16 @@ class PyGhidraClient(AbstractGhidraClient):
                 func.setReturnType(ret_type, SourceType.USER_DEFINED)
                 from ghidra.app.services import FunctionUpdateType  # type: ignore[import]
 
-                func.replaceParameters(
-                    params, FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS, True
-                )
+                func.replaceParameters(params, FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS, True)
 
             self._run_program_transaction(desc, action)
             return f"Set prototype for function at {function_address} to '{prototype}'"
         except Exception as exc:
             return self._operation_error("set_function_prototype", exc)
 
-    def set_local_variable_type(
-        self, function_address: str, variable_name: str, new_type: str
-    ) -> str:
+    def set_local_variable_type(self, function_address: str, variable_name: str, new_type: str) -> str:
         if not function_address or not variable_name or not new_type:
-            return (
-                "Error: 'function_address', 'variable_name', and 'new_type' are "
-                "required for set_local_variable_type"
-            )
+            return "Error: 'function_address', 'variable_name', and 'new_type' are required for set_local_variable_type"
 
         try:
             from ghidra.program.model.symbol import SourceType  # type: ignore[import]
@@ -2816,10 +2616,7 @@ class PyGhidraClient(AbstractGhidraClient):
             addr = self._address_from_hex(str(function_address))
             func = self._get_function_for_address(addr)
             if func is None:
-                return (
-                    "Error: No function found at or containing address "
-                    f"{function_address}"
-                )
+                return f"Error: No function found at or containing address {function_address}"
 
             dtm = program.getDataTypeManager()
             parser = CParser(dtm)
@@ -2846,20 +2643,14 @@ class PyGhidraClient(AbstractGhidraClient):
                     continue
 
             if target is None:
-                return (
-                    f"Error: variable '{variable_name}' not found in function at "
-                    f"{function_address}"
-                )
+                return f"Error: variable '{variable_name}' not found in function at {function_address}"
 
             desc = f"set_local_variable_type for {variable_name} at {function_address}"
             self._run_program_transaction(
                 desc,
                 lambda: target.setDataType(desired_dt, SourceType.USER_DEFINED),
             )
-            return (
-                f"Set type of variable '{variable_name}' in function at "
-                f"{function_address} to '{new_type}'"
-            )
+            return f"Set type of variable '{variable_name}' in function at {function_address} to '{new_type}'"
         except Exception as exc:
             return self._operation_error("set_local_variable_type", exc)
 
@@ -2912,9 +2703,7 @@ class PyGhidraClient(AbstractGhidraClient):
                     else:
                         data = listing.getDataAt(to_addr)
                         if data is not None:
-                            label = data.getLabel() or getattr(
-                                data, "getPathName", lambda: ""
-                            )()
+                            label = data.getLabel() or getattr(data, "getPathName", lambda: "")()
                             target_info = f" to data {label}"
                     lines.append(f"To {to_addr}{target_info} [{ref_type}]")
                 except Exception:
@@ -2927,12 +2716,7 @@ class PyGhidraClient(AbstractGhidraClient):
         if not name:
             return ["Error: 'name' parameter is required for function_xrefs"]
 
-        if (
-            name.upper().startswith("0X")
-            or name[:3].upper() == "FUN"
-            or name.isalnum()
-            and len(name) >= 6
-        ):
+        if name.upper().startswith("0X") or name[:3].upper() == "FUN" or name.isalnum() and len(name) >= 6:
             addr = self._normalize_addr(name)
             return self.get_xrefs_to(addr, offset=offset, limit=limit)
 
@@ -3033,9 +2817,7 @@ class PyGhidraClient(AbstractGhidraClient):
                 hex_bytes = " ".join(f"{byte:02X}" for byte in chunk)
                 if len(chunk) < bytes_per_line:
                     hex_bytes += "   " * (bytes_per_line - len(chunk))
-                ascii_repr = "".join(
-                    chr(byte) if 32 <= byte < 127 else "." for byte in chunk
-                )
+                ascii_repr = "".join(chr(byte) if 32 <= byte < 127 else "." for byte in chunk)
                 lines.append(f"{line_addr}: {hex_bytes} |{ascii_repr}|")
 
             return "\n".join(lines)

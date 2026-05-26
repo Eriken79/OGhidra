@@ -3001,10 +3001,11 @@ class ToolButtonsPanel:
                         ]
 
                         if is_list_tool:
-                            self.response_panel.add_response("Progress", f"Retrieving all {tool_name.split('_')[1]} (paginated)...")
+                            self.response_panel.add_response(
+                                "Progress", f"Retrieving all {tool_name.split('_')[1]} (paginated)..."
+                            )
                             raw_tool_result = self.bridge._collect_all_paginated_list_results(
-                                tool_method,
-                                **((params or {}).copy())
+                                tool_method, **((params or {}).copy())
                             )
                             if isinstance(raw_tool_result, list):
                                 self.response_panel.add_response("Progress", f"Collected {len(raw_tool_result)} items.")
@@ -3577,15 +3578,9 @@ CRITICAL: You MUST include all four sections with the exact headers shown above.
             # this works reliably across backends (HTTP MCP and pyGhidra)
             # regardless of how auto-generated names are formatted.
             try:
-                function_decompile_result = (
-                    self.bridge.ghidra.decompile_function_by_address(address=address)
-                )
-                if isinstance(
-                    function_decompile_result, str
-                ) and function_decompile_result.lower().startswith("error:"):
-                    result["error_msg"] = (
-                        f"Failed to decompile: {function_decompile_result}"
-                    )
+                function_decompile_result = self.bridge.ghidra.decompile_function_by_address(address=address)
+                if isinstance(function_decompile_result, str) and function_decompile_result.lower().startswith("error:"):
+                    result["error_msg"] = f"Failed to decompile: {function_decompile_result}"
                     result["result_type"] = "failed"
                     return result
 
