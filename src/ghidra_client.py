@@ -95,66 +95,6 @@ class AbstractGhidraClient(ABC):
                 return default
         logger.warning(f"Invalid {param_name} type={type(value).__name__}; using default={default}")
         return default
-    
-    def __init__(self, config: GhidraMCPConfig, ollama_client=None):
-        """
-        Initialize the GhidraMCP client.
-        
-        Args:
-            config: GhidraMCPConfig object with connection details
-            ollama_client: Optional OllamaClient for AI-powered analysis
-        """
-        self.config = config
-        self.client = httpx.Client(timeout=config.timeout)
-        self.api_version = None
-        self.ollama_client = ollama_client
-        
-        # Instance management
-        self.active_instances = {}  # port -> info_dict
-        self.current_instance_port = None
-        
-        # Parse default port from config.base_url
-        try:
-            parsed = urlparse(str(config.base_url))
-            if parsed.port:
-                self.default_port = parsed.port
-                # We'll set this as active initially, but verify it later
-                self.current_instance_port = self.default_port
-                self.active_instances[self.default_port] = {"url": str(config.base_url).rstrip('/')}
-            else:
-                self.default_port = 8080
-                self.current_instance_port = 8080
-        except Exception:
-            self.default_port = 8080
-            self.current_instance_port = 8080
-            
-        logger.info(f"Initialized GhidraMCP client at: {config.base_url}")
-        
-        # Try to detect API version and available endpoints
-        self._detect_api()
-        
-        # Auto-discover other instances on startup
-        try:
-            self.instances_list()
-        except AttributeError:
-            # Methods might not be added yet if doing partial update
-            pass
-    
-    def _detect_api(self):
-        """Detect the API version and available endpoints."""
-        try:
-            # Try to get available methods
-            response = self.safe_get("methods", {"offset": 0, "limit": 1})
-            # Check if response is valid (list of strings, not error strings)
-            if response and isinstance(response, list) and not (response and (response[0].startswith("Error") or response[0].startswith("Request failed"))):
-                logger.info("Successfully connected to GhidraMCP API")
-                # Update info for current instance
-                if self.current_instance_port:
-                    self._update_instance_info(self.current_instance_port)
-            else:
-                logger.warning(f"Failed to connect to GhidraMCP API: {response}")
-        except Exception as e:
-            logger.warning(f"Error detecting API: {str(e)}")
 
     def _get_offset_limit(
         self, offset: Any, limit: Any, *, default_limit: int = 100

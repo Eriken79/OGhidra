@@ -2950,41 +2950,12 @@ class ToolButtonsPanel:
                         
                         if is_list_tool:
                             self.response_panel.add_response("Progress", f"Retrieving all {tool_name.split('_')[1]} (paginated)...")
-                            
-                            all_items = []
-                            offset = (params or {}).get('offset', 0)
-                            limit = 200 # Use a consistent page size
-                            
-                            # Merge existing params if any
-                            base_params = (params or {}).copy()
-                            
-                            while True:
-                                current_params = base_params.copy()
-                                current_params.update({'offset': offset, 'limit': limit})
-                                
-                                batch_result = tool_method(**current_params)
-                                
-                                # Check for error
-                                if isinstance(batch_result, str) and batch_result.lower().startswith("error:"):
-                                    self.response_panel.add_response("Error", f"Failed to get batch at offset {offset}: {batch_result}")
-                                    break
-                                
-                                if not batch_result:
-                                    break
-                                    
-                                if isinstance(batch_result, list):
-                                    all_items.extend(batch_result)
-                                    if len(batch_result) < limit:
-                                        break
-                                else:
-                                    # Fallback for unexpected formats
-                                    all_items = batch_result
-                                    break
-                                    
-                                offset += limit
-                                self.response_panel.add_response("Progress", f"Collected {len(all_items)} items so far...")
-                                
-                            raw_tool_result = all_items
+                            raw_tool_result = self.bridge._collect_all_paginated_list_results(
+                                tool_method,
+                                **((params or {}).copy())
+                            )
+                            if isinstance(raw_tool_result, list):
+                                self.response_panel.add_response("Progress", f"Collected {len(raw_tool_result)} items.")
                         else:
                             # Standard single call for non-list tools
                             raw_tool_result = tool_method(**(params or {}))

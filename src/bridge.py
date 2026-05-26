@@ -30,7 +30,6 @@ from src.models.memory import (
     MessageRole,
     CAGContext,
     StructuredPrompt,
-    SystemContextBuilder,
     AnalysisState,
     ExecutionPhaseResults,
     ToolExecution,
@@ -44,11 +43,6 @@ from src.context_manager import ContextManager
 from src.analysis_dump import AnalysisDumper
 from src.coverage_tracker import CoverageTracker
 from src.lead_tracker import LeadTracker
-from src.tool_executor import ToolExecutor
-from src.event_emitter import EventEmitter
-from src.blackboard import BlackboardAccess
-from src.orchestrator import Orchestrator
-from src.lazy_ghidra import LazyGhidraClient
 from datetime import datetime
 
 # Configure logging
@@ -133,11 +127,7 @@ class Bridge:
         ghidra_cls, backend_label = select_ghidra_client_class(config)
         self.logger.info("Using %s backend for Ghidra integration", backend_label)
 
-        self.ghidra_client = LazyGhidraClient(
-            ghidra_cls,
-            config=config.ghidra,
-            ollama_client=self.ollama,
-        )
+        self.ghidra_client = ghidra_cls(config=config.ghidra, ollama_client=self.ollama)
 
         # Set Ollama client for embeddings
         Bridge.set_ollama_client(self.ollama)
@@ -1584,6 +1574,55 @@ You can help analyze binary files by executing commands through GhidraMCP."""
         
         lines.append("💡 Tip: These functions were automatically retrieved based on your query. You can decompile them for more details.")
         return "\n".join(lines)
+
+    def _collect_all_paginated_list_results(self, tool_method, **params):
+        """Collect all pages from a paginated list tool and strip metadata lines."""
+        aggregated = []
+        current_params = params.copy()
+        page_count = 0
+        max_pages = 1000
+
+        while page_count < max_pages:
+            batch_result = tool_method(**current_params)
+
+            if isinstance(batch_result, str):
+                raw_batch = [line.strip() for line in batch_result.splitlines() if line.strip()]
+            elif isinstance(batch_result, list):
+                raw_batch = [str(line).strip() for line in batch_result if str(line).strip()]
+            else:
+                return aggregated
+
+            if not raw_batch:
+                break
+
+            if any(line.lower().startswith(("error", "request failed")) for line in raw_batch):
+                if aggregated:
+                    break
+                error_line = raw_batch[0]
+                if error_line.lower().startswith("error:"):
+                    return "ERROR:" + error_line[6:]
+                return f"ERROR: {error_line}"
+
+            next_match = None
+            for line in raw_batch:
+                if line.startswith('['):
+                    match = re.search(r'\[Next: offset=(\d+), limit=(\d+)\]', line)
+                    if match:
+                        next_match = (int(match.group(1)), int(match.group(2)))
+                    continue
+                aggregated.append(line)
+
+            if not next_match:
+                break
+
+            current_params["offset"] = next_match[0]
+            current_params["limit"] = next_match[1]
+            page_count += 1
+
+        if page_count >= max_pages:
+            self.logger.warning("Reached maximum pagination depth while collecting tool results")
+
+        return aggregated
 
     def execute_command(self, command_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -5536,7 +5575,7 @@ Be strict: Only mark as GOAL ACHIEVED if the goal is FULLY and COMPLETELY satisf
         
         try:
             # Collect function information
-            functions_result = self.ghidra.list_functions()
+            functions_result = self._collect_all_paginated_list_results(self.ghidra.list_functions)
             if isinstance(functions_result, list):
                 data['functions'] = functions_result
             elif isinstance(functions_result, str) and not functions_result.startswith("ERROR:"):
@@ -5569,7 +5608,7 @@ Be strict: Only mark as GOAL ACHIEVED if the goal is FULLY and COMPLETELY satisf
             data['metadata']['analyzed_count'] = len(data['function_summaries'])
             
             # Collect imports
-            imports_result = self.ghidra.list_imports()
+            imports_result = self._collect_all_paginated_list_results(self.ghidra.list_imports)
             if isinstance(imports_result, (list, str)) and not str(imports_result).startswith("ERROR:"):
                 if isinstance(imports_result, str):
                     data['imports'] = [i.strip() for i in imports_result.split('\n') if i.strip()]
@@ -5577,7 +5616,7 @@ Be strict: Only mark as GOAL ACHIEVED if the goal is FULLY and COMPLETELY satisf
                     data['imports'] = imports_result
             
             # Collect exports
-            exports_result = self.ghidra.list_exports()
+            exports_result = self._collect_all_paginated_list_results(self.ghidra.list_exports)
             if isinstance(exports_result, (list, str)) and not str(exports_result).startswith("ERROR:"):
                 if isinstance(exports_result, str):
                     data['exports'] = [e.strip() for e in exports_result.split('\n') if e.strip()]
@@ -5585,7 +5624,7 @@ Be strict: Only mark as GOAL ACHIEVED if the goal is FULLY and COMPLETELY satisf
                     data['exports'] = exports_result
             
             # Collect memory segments
-            segments_result = self.ghidra.list_segments()
+            segments_result = self._collect_all_paginated_list_results(self.ghidra.list_segments)
             if isinstance(segments_result, (list, str)) and not str(segments_result).startswith("ERROR:"):
                 if isinstance(segments_result, str):
                     data['segments'] = [s.strip() for s in segments_result.split('\n') if s.strip()]
@@ -5593,14 +5632,14 @@ Be strict: Only mark as GOAL ACHIEVED if the goal is FULLY and COMPLETELY satisf
                     data['segments'] = segments_result
             
             # Collect classes/namespaces
-            classes_result = self.ghidra.list_classes()
+            classes_result = self._collect_all_paginated_list_results(self.ghidra.list_classes)
             if isinstance(classes_result, (list, str)) and not str(classes_result).startswith("ERROR:"):
                 if isinstance(classes_result, str):
                     data['classes'] = [c.strip() for c in classes_result.split('\n') if c.strip()]
                 else:
                     data['classes'] = classes_result
             
-            namespaces_result = self.ghidra.list_namespaces()
+            namespaces_result = self._collect_all_paginated_list_results(self.ghidra.list_namespaces)
             if isinstance(namespaces_result, (list, str)) and not str(namespaces_result).startswith("ERROR:"):
                 if isinstance(namespaces_result, str):
                     data['namespaces'] = [n.strip() for n in namespaces_result.split('\n') if n.strip()]
@@ -5608,7 +5647,7 @@ Be strict: Only mark as GOAL ACHIEVED if the goal is FULLY and COMPLETELY satisf
                     data['namespaces'] = namespaces_result
             
             # Collect data items
-            data_items_result = self.ghidra.list_data_items()
+            data_items_result = self._collect_all_paginated_list_results(self.ghidra.list_data_items)
             if isinstance(data_items_result, (list, str)) and not str(data_items_result).startswith("ERROR:"):
                 if isinstance(data_items_result, str):
                     data['data_items'] = [d.strip() for d in data_items_result.split('\n') if d.strip()]
@@ -5617,7 +5656,7 @@ Be strict: Only mark as GOAL ACHIEVED if the goal is FULLY and COMPLETELY satisf
             
             # Collect strings with addresses for evidence
             try:
-                strings_result = self.ghidra.list_strings(limit=500)  # Get top 500 strings
+                strings_result = self._collect_all_paginated_list_results(self.ghidra.list_strings)
                 if isinstance(strings_result, list):
                     data['strings'] = strings_result  # JSON format likely includes addresses
                 elif isinstance(strings_result, str) and not strings_result.startswith("ERROR:"):
