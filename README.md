@@ -303,31 +303,71 @@ File → Load Session
 
 ---
 
-### Backend Setups
+## Backend Setup
 
-OGhidra implements two backend types, MCP and pyGhidra
-MCP allows for integration with the GhidraMCP server and
-requires the Ghidra client to be run during analysis
-PyGhidra allows for headless analysis without the Ghidra
-client and removes the server component associated with MCP
+OGhidra supports two backend types:
 
-The following command line option exists for choosing backends:
+- **MCP** — Integrates with the GhidraMCP server and requires the Ghidra client to be running during analysis
+- **PyGhidra** — Supports headless analysis without the Ghidra client and removes the server component required by MCP
+
+### Selecting a Backend
+
+Use the following command-line option to choose a backend:
+
+```bash
 --ghidra-backend={http,pyghidra}
-http will result in the GhidraMCP backend
-pyghidra will result in the PyGhidra backend
+```
 
-The following options exist for configuring the PyGhidra backend:
---pyghidra-project={*.gpr}
-PyGhidra requires a Ghidra project file in order to launch OGhidra
-specify the .gpr file on the command line with its path
---pyghidra-program
-A user must specify which binary within the Ghidra project to analyze with
-this command line option. Failure to specify will cause the program to not
-launch. List the name as it shown in the Ghidra project GUI.
---pyghidra-binary
-The PyGhidra backend allows a user to specify the path for a binary on the
-command line, resulting in a new Ghidra project (.gpr) being generated and
-the binary being launched in OGhidra
+| Backend Option | Description |
+|----------------|-------------|
+| `http` | Uses the GhidraMCP backend |
+| `pyghidra` | Uses the PyGhidra backend |
+
+---
+
+## PyGhidra Configuration
+
+### Using an Existing Ghidra Project
+
+Specify a Ghidra project file (`.gpr`) when launching OGhidra:
+
+```bash
+--pyghidra-project=/path/to/project.gpr
+```
+
+PyGhidra requires a valid Ghidra project in order to launch OGhidra.
+
+---
+
+### Selecting a Program
+
+Specify which binary inside the Ghidra project should be analyzed:
+
+```bash
+--pyghidra-program=<program_name>
+```
+
+Requirements:
+
+- The program name must exactly match the name shown in the Ghidra project GUI
+- This option is required when using an existing project
+- Failure to specify a program will prevent OGhidra from launching
+
+---
+
+### Launching a Binary Directly
+
+You can also provide a binary path directly:
+
+```bash
+--pyghidra-binary=/path/to/binary
+```
+
+When this option is used, PyGhidra automatically:
+
+1. Creates a new Ghidra project (`.gpr`)
+2. Imports the binary
+3. Launches the binary in OGhidra for analysis
 
 ---
 
