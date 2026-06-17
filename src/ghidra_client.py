@@ -2728,7 +2728,6 @@ class PyGhidraClient(AbstractGhidraClient):
             func_mgr = program.getFunctionManager()
 
             target_address = None
-            target_type = "function"
 
             func = self._find_function_by_name(name)
             if func is not None:
@@ -2739,7 +2738,6 @@ class PyGhidraClient(AbstractGhidraClient):
                     try:
                         if sym.getName() == name:
                             target_address = sym.getAddress()
-                            target_type = "external"
                             break
                     except Exception:
                         continue
@@ -2752,7 +2750,6 @@ class PyGhidraClient(AbstractGhidraClient):
                 for sym in syms:
                     try:
                         target_address = sym.getAddress()
-                        target_type = sym.getSymbolType().toString().lower()
                         break
                     except Exception:
                         continue

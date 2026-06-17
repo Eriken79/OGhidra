@@ -19,6 +19,9 @@ import re
 import weakref
 import concurrent.futures.thread as thread_executor
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from .config import BridgeConfig
+from .bridge import Bridge
+
 
 
 class DaemonThreadPoolExecutor(ThreadPoolExecutor):
@@ -57,9 +60,6 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
             self._threads.add(t)  # type: ignore[attr-defined]
             thread_executor._threads_queues[t] = self._work_queue  # type: ignore[attr-defined]
 
-
-from .config import BridgeConfig
-from .bridge import Bridge
 
 logger = logging.getLogger("ollama-ghidra-bridge.ui")
 
