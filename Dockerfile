@@ -17,7 +17,7 @@ RUN wget https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghid
 ENV GHIDRA_INSTALL_DIR=/opt/ghidra_12.1_PUBLIC
 
 
-RUN git clone -b pyghidra https://github.com/Eriken79/OGhidra.git \
+RUN git clone -b pyghidra https://github.com/llnl/OGhidra.git \
     && wget -qO- https://astral.sh/uv/install.sh | sh \
     && source $HOME/.local/bin/env
 
@@ -29,15 +29,6 @@ RUN echo '[project.optional-dependencies]' >> pyproject.toml\
     && $HOME/.local/bin/uv sync --extra headless
 
 ADD .env /opt/OGhidra/.env
-
-
-COPY ca-bundle.crt /etc/pki/ca-trust/source/anchors/ca-bundle.crt
-COPY eratosthenes-ollama.crt /etc/pki/ca-trust/source/anchors/eratosthenes-ollama.crt
-
-RUN update-ca-trust extract
-
-ENV SSL_CERT_FILE=/etc/pki/tls/cert.pem
-ENV REQUESTS_CA_BUNDLE=/etc/pki/tls/cert.pem
 
 RUN microdnf install -y python3-tkinter && microdnf clean all
 
