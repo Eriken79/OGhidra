@@ -16,6 +16,47 @@ from typing import Dict, Any, Optional
 import logging
 import os
 import re
+import weakref
+import concurrent.futures.thread as thread_executor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+class DaemonThreadPoolExecutor(ThreadPoolExecutor):
+    """ThreadPoolExecutor whose worker threads are daemons.
+
+    This ensures background workers (e.g. bulk rename) do not prevent the
+    Python process from exiting when the UI is closed.
+    """
+
+    def _adjust_thread_count(self):  # type: ignore[override]
+        """Mirror CPython's executor logic, but spawn daemon workers."""
+        if self._idle_semaphore.acquire(timeout=0):  # type: ignore[attr-defined]
+            return
+
+        def weakref_cb(_, q=self._work_queue):  # type: ignore[attr-defined]
+            q.put(None)
+
+        num_threads = len(self._threads)  # type: ignore[attr-defined]
+        if num_threads < self._max_workers:  # type: ignore[attr-defined]
+            thread_name = "%s_%d" % (
+                self._thread_name_prefix or self,  # type: ignore[attr-defined]
+                num_threads,
+            )
+            t = threading.Thread(
+                name=thread_name,
+                target=thread_executor._worker,
+                args=(
+                    weakref.ref(self, weakref_cb),
+                    self._work_queue,  # type: ignore[attr-defined]
+                    self._initializer,  # type: ignore[attr-defined]
+                    self._initargs,  # type: ignore[attr-defined]
+                ),
+            )
+            t.daemon = True
+            t.start()
+            self._threads.add(t)  # type: ignore[attr-defined]
+            thread_executor._threads_queues[t] = self._work_queue  # type: ignore[attr-defined]
+
 
 from .config import BridgeConfig
 from .bridge import Bridge
@@ -389,17 +430,36 @@ class ServerConfigDialog:
                 except Exception as e:
                     results.append(f"Ollama: ❌ {str(e)}")
 
-            # Test GhidraMCP
-            try:
-                import requests
+            backend = getattr(self.config.ghidra, "backend", "http")
+            if backend == "pyghidra":
+                try:
+                    from .ghidra_client import PyGhidraClient
 
-                response = requests.get(f"{self.ghidra_url_var.get()}/methods", params={"offset": 0, "limit": 1}, timeout=5)
-                if response.status_code == 200:
-                    results.append("GhidraMCP: ✅ Connected")
-                else:
-                    results.append(f"GhidraMCP: ❌ HTTP {response.status_code}")
-            except Exception as e:
-                results.append(f"GhidraMCP: ❌ {str(e)}")
+                    client = PyGhidraClient(self.config.ghidra)
+                    try:
+                        if client.check_health():
+                            results.append("pyGhidra: ✅ Connected")
+                        else:
+                            results.append("pyGhidra: ❌ Health check failed")
+                    finally:
+                        client.close()
+                except Exception as e:
+                    results.append(f"pyGhidra: ❌ {str(e)}")
+            else:
+                try:
+                    import requests
+
+                    response = requests.get(
+                        f"{self.ghidra_url_var.get()}/methods",
+                        params={"offset": 0, "limit": 1},
+                        timeout=5,
+                    )
+                    if response.status_code == 200:
+                        results.append("GhidraMCP: ✅ Connected")
+                    else:
+                        results.append(f"GhidraMCP: ❌ HTTP {response.status_code}")
+                except Exception as e:
+                    results.append(f"GhidraMCP: ❌ {str(e)}")
 
             # Show results
             messagebox.showinfo("Connection Test", "\n".join(results))
@@ -2946,43 +3006,11 @@ class ToolButtonsPanel:
                             self.response_panel.add_response(
                                 "Progress", f"Retrieving all {tool_name.split('_')[1]} (paginated)..."
                             )
-
-                            all_items = []
-                            offset = (params or {}).get("offset", 0)
-                            limit = 200  # Use a consistent page size
-
-                            # Merge existing params if any
-                            base_params = (params or {}).copy()
-
-                            while True:
-                                current_params = base_params.copy()
-                                current_params.update({"offset": offset, "limit": limit})
-
-                                batch_result = tool_method(**current_params)
-
-                                # Check for error
-                                if isinstance(batch_result, str) and batch_result.lower().startswith("error:"):
-                                    self.response_panel.add_response(
-                                        "Error", f"Failed to get batch at offset {offset}: {batch_result}"
-                                    )
-                                    break
-
-                                if not batch_result:
-                                    break
-
-                                if isinstance(batch_result, list):
-                                    all_items.extend(batch_result)
-                                    if len(batch_result) < limit:
-                                        break
-                                else:
-                                    # Fallback for unexpected formats
-                                    all_items = batch_result
-                                    break
-
-                                offset += limit
-                                self.response_panel.add_response("Progress", f"Collected {len(all_items)} items so far...")
-
-                            raw_tool_result = all_items
+                            raw_tool_result = self.bridge._collect_all_paginated_list_results(
+                                tool_method, **((params or {}).copy())
+                            )
+                            if isinstance(raw_tool_result, list):
+                                self.response_panel.add_response("Progress", f"Collected {len(raw_tool_result)} items.")
                         else:
                             # Standard single call for non-list tools
                             raw_tool_result = tool_method(**(params or {}))
@@ -3548,9 +3576,11 @@ CRITICAL: You MUST include all four sections with the exact headers shown above.
                     result["success"] = True
                     return result
 
-            # STEP 1: Decompile function
+            # STEP 1: Decompile function. Use address-based decompilation so
+            # this works reliably across backends (HTTP MCP and pyGhidra)
+            # regardless of how auto-generated names are formatted.
             try:
-                function_decompile_result = self.bridge.ghidra.decompile_function(name=function_name)
+                function_decompile_result = self.bridge.ghidra.decompile_function_by_address(address=address)
                 if isinstance(function_decompile_result, str) and function_decompile_result.lower().startswith("error:"):
                     result["error_msg"] = f"Failed to decompile: {function_decompile_result}"
                     result["result_type"] = "failed"
@@ -4311,11 +4341,13 @@ CRITICAL: You MUST include all four sections with the exact headers shown above.
                     # PARALLEL PROCESSING CONFIGURATION
                     max_workers = 5  # Process 5 functions concurrently (configurable)
                     self.response_panel.add_response(
-                        "⚡ Parallel Processing", f"Using {max_workers} concurrent workers for faster processing"
+                        "⚡ Parallel Processing",
+                        f"Using {max_workers} concurrent workers for faster processing",
                     )
 
-                    # Step 2: Process functions in parallel using ThreadPoolExecutor
-                    from concurrent.futures import ThreadPoolExecutor, as_completed
+                    # Step 2: Process functions in parallel using a daemon-based
+                    # ThreadPoolExecutor so worker threads don't block process
+                    # exit when the UI is closed.
 
                     successful_renames = 0
                     failed_renames = 0
@@ -4324,7 +4356,7 @@ CRITICAL: You MUST include all four sections with the exact headers shown above.
                     completed_count = 0  # Track completion for progress updates
 
                     # PARALLEL PROCESSING: Submit all functions to thread pool
-                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    with DaemonThreadPoolExecutor(max_workers=max_workers) as executor:
                         # Submit all functions for processing
                         future_to_function = {
                             executor.submit(
@@ -5282,6 +5314,10 @@ class OGhidraUI:
             size=(1400, 900),
         )
 
+        # Ensure closing the main window triggers a clean application shutdown
+        # (save session, close Ghidra/pyGhidra client, exit mainloop).
+        self.root.protocol("WM_DELETE_WINDOW", self._quit_application)
+
         # Store style reference for theme-aware color access
         self.style = self.root.style
 
@@ -6213,12 +6249,21 @@ class OGhidraUI:
             except Exception as e:
                 results.append(f"Ollama API: ERROR - {e}")
 
-            # Check Ghidra
+            # Check Ghidra backend (HTTP MCP server or pyGhidra)
             try:
                 ghidra_health = self.bridge.ghidra.check_health()
-                results.append(f"GhidraMCP API: {'OK ✅' if ghidra_health else 'NOT OK ❌'}")
+                # Decide label based on configured backend
+                backend = getattr(self.config.ghidra, "backend", "http")
+                if backend == "pyghidra":
+                    label = "PyGhidra API"
+                else:
+                    label = "GhidraMCP API"
+
+                results.append(f"{label}: {'OK ✅' if ghidra_health else 'NOT OK ❌'}")
             except Exception as e:
-                results.append(f"GhidraMCP API: ERROR - {e}")
+                backend = getattr(self.config.ghidra, "backend", "http")
+                label = "PyGhidra API" if backend == "pyghidra" else "GhidraMCP API"
+                results.append(f"{label}: ERROR - {e}")
 
             # Check CAG
             try:
@@ -6539,6 +6584,13 @@ Features:
                 # Save session before quitting
                 if hasattr(self.bridge, "cag_manager") and self.bridge.cag_manager:
                     self.bridge.cag_manager.save_session()
+                # Best-effort: close any Ghidra client (including pyGhidra
+                # backend) so projects/programs are released cleanly.
+                if hasattr(self.bridge, "ghidra_client") and self.bridge.ghidra_client:
+                    try:
+                        self.bridge.ghidra_client.close()
+                    except Exception as e:
+                        logger.error(f"Error closing Ghidra client on quit: {e}")
             except Exception as e:
                 logger.error(f"Error saving session on quit: {e}")
 
