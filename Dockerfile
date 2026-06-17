@@ -21,7 +21,7 @@ RUN git clone -b pyghidra https://github.com/llnl/OGhidra.git \
     && wget -qO- https://astral.sh/uv/install.sh | sh \
     && source $HOME/.local/bin/env
 
-    
+
 
 WORKDIR /opt/OGhidra
 RUN echo '[project.optional-dependencies]' >> pyproject.toml\

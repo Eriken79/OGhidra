@@ -23,7 +23,6 @@ from .config import BridgeConfig
 from .bridge import Bridge
 
 
-
 class DaemonThreadPoolExecutor(ThreadPoolExecutor):
     """ThreadPoolExecutor whose worker threads are daemons.
 
