@@ -347,6 +347,12 @@ Specify which binary inside the Ghidra project should be analyzed:
 --pyghidra-program=<program_name>
 ```
 
+example call for selecting a program in a Ghidra project:
+
+```bash
+uv run main.py --ui --ghidra-backend=pyghidra --pyghidra-project=/path/to/project.gpr --pyghidra-program=<program_name>
+```
+
 Requirements:
 
 - The program name must exactly match the name shown in the Ghidra project GUI
@@ -368,6 +374,10 @@ When this option is used, PyGhidra automatically:
 1. Creates a new Ghidra project (`.gpr`)
 2. Imports the binary
 3. Launches the binary in OGhidra for analysis
+
+example call for launching a binary directly:
+
+uv run main.py --ui --ghidra-backend=pyghidra --pyghidra-binary=/path/to/binary
 
 ---
 

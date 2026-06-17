@@ -18,6 +18,7 @@ dependencies = [
     "numpy>=1.24.0",              # Required: for vector operations with Ollama embeddings
     "rich>=13.7.1",               # For enhanced terminal output in interactive mode
     "ttkbootstrap>=1.10.0",       # Modern dark themes with rounded corners for UI
+    "pyghidra>=3.0.2",
     "ijson>=3.2.0",               # Optional: for streaming large JSON files (large sessions)
     "pydantic>=2.7.1",
     "pydantic-settings>=2.2.1",
