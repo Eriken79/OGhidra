@@ -24,9 +24,6 @@ RUN git clone -b pyghidra https://github.com/llnl/OGhidra.git \
     
 
 WORKDIR /opt/OGhidra
-RUN echo '[project.optional-dependencies]' >> pyproject.toml\
-    && echo 'headless=[ "pyghidra>=3.1.0" ]' >> pyproject.toml \
-    && $HOME/.local/bin/uv sync --extra headless
 
 ADD .env /opt/OGhidra/.env
 
