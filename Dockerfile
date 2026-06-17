@@ -24,6 +24,7 @@ RUN git clone -b pyghidra https://github.com/llnl/OGhidra.git \
     
 
 WORKDIR /opt/OGhidra
+RUN $HOME/.local/bin/uv sync --extra headless
 
 ADD .env /opt/OGhidra/.env
 
