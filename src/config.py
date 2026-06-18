@@ -1387,9 +1387,8 @@ class GhidraMCPConfig(BaseModel):
         default=None,
         description=(
             "Program name or path within the project for pyGhidra backend. "
-            "If omitted and the project contains exactly one program, that program "
-            "will be opened automatically; if multiple programs exist, you must "
-            "specify this value."
+            "Multiple programs may be provided as a comma-separated list. "
+            "If omitted, all discovered programs in the project will be opened."
         ),
         env="PYGHIDRA_PROGRAM",
     )

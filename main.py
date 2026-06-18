@@ -1331,8 +1331,8 @@ def main():
         default=None,
         help=(
             "Program name or path within the project for pyGhidra backend. "
-            "If omitted and the project contains exactly one program, that program "
-            "will be opened automatically; otherwise you must specify this option."
+            "Multiple programs can be supplied as a comma-separated list. "
+            "If omitted, OGhidra will open all programs discovered in the project."
         ),
     )
 

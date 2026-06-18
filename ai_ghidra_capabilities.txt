@@ -43,3 +43,8 @@ Instance Management:
 - instances_discover(host, start_port, end_port): Discover instances on a specific host/port range.
 - instances_use(port): Switch the active working instance to the one on the specified port.
 - instances_current(): Get information about the currently active instance.
+
+PyGhidra note:
+- When the pyGhidra backend has multiple programs open, instances_list() shows numbered program slots.
+- Use instances_use(port=<slot_number>) to switch the active pyGhidra program.
+- You can also target a specific pyGhidra program directly with <program>::<function-or-address>.

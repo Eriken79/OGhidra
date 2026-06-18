@@ -1342,9 +1342,17 @@ class PyGhidraClient(AbstractGhidraClient):
         # pyGhidra-specific state
         self._pyghidra = None
         self._project = None
-        self._program = None
+        self._program = None  # Primary/default program for compatibility
+        self._current_program_key = None
+        self._programs_by_key: Dict[str, Any] = {}
+        self._program_info_by_key: Dict[str, Dict[str, str]] = {}
+        self._program_order: List[str] = []
+        self._program_contexts: List[Any] = []
+        self._program_consumers: List[Tuple[Any, Any]] = []
+        self._open_program_cms: List[Any] = []
         self._decomp = None  # Lazy-initialized decompiler interface
         self._decomp_monitor = None
+        self._decomp_program_key = None
         self._project_ctx = None
         self._program_ctx = None
         self._program_consumer = None
@@ -1369,24 +1377,24 @@ class PyGhidraClient(AbstractGhidraClient):
                     logger.exception("Error disposing pyGhidra decompiler interface")
                 finally:
                     self._decomp = None
+                    self._decomp_program_key = None
+                    self._decomp_monitor = None
 
-            # Release program if acquired via consume_program
-            if getattr(self, "_program_consumer", None) is not None and self._program is not None:
+            for program, consumer in reversed(getattr(self, "_program_consumers", [])):
                 try:
-                    self._program.release(self._program_consumer)
+                    program.release(consumer)
                 except Exception:
                     logger.exception("Error releasing pyGhidra program consumer")
-                finally:
-                    self._program_consumer = None  # type: ignore[attr-defined]
+            self._program_consumers = []
+            self._program_consumer = None  # type: ignore[attr-defined]
 
-            # Close any program context manager we created
-            if getattr(self, "_program_ctx", None) is not None:
+            for program_ctx in reversed(getattr(self, "_program_contexts", [])):
                 try:
-                    self._program_ctx.__exit__(None, None, None)  # type: ignore[call-arg]
+                    program_ctx.__exit__(None, None, None)  # type: ignore[call-arg]
                 except Exception:
                     logger.exception("Error closing pyGhidra program context")
-                finally:
-                    self._program_ctx = None  # type: ignore[attr-defined]
+            self._program_contexts = []
+            self._program_ctx = None  # type: ignore[attr-defined]
 
             # Close the project context manager if we created one
             if getattr(self, "_project_ctx", None) is not None:
@@ -1397,15 +1405,21 @@ class PyGhidraClient(AbstractGhidraClient):
                 finally:
                     self._project_ctx = None  # type: ignore[attr-defined]
 
-            # Close the open_program() context manager used for binary-only mode.
-            if getattr(self, "_open_program_cm", None) is not None:
+            for open_program_cm in reversed(getattr(self, "_open_program_cms", [])):
                 try:
-                    self._open_program_cm.__exit__(None, None, None)  # type: ignore[call-arg]
+                    open_program_cm.__exit__(None, None, None)  # type: ignore[call-arg]
                 except Exception:
                     logger.exception("Error closing pyGhidra open_program context")
-                finally:
-                    self._open_program_cm = None  # type: ignore[attr-defined]
+            self._open_program_cms = []
+            self._open_program_cm = None  # type: ignore[attr-defined]
 
+            self._program_order = []
+            self._current_program_key = None
+            self._programs_by_key = {}
+            self._program_info_by_key = {}
+            self.active_instances = {}
+            self.current_instance_port = None
+            self.default_port = None
             self._program = None
             self._project = None
         except Exception:
@@ -1547,7 +1561,6 @@ class PyGhidraClient(AbstractGhidraClient):
 
             # Keep the context manager alive so the FlatProgramAPI/program
             # remain valid for the lifetime of this client.
-            self._open_program_cm = open_prog_cm
             flat_api = open_prog_cm.__enter__()
 
             try:
@@ -1558,7 +1571,7 @@ class PyGhidraClient(AbstractGhidraClient):
                     "Expected FlatProgramAPI with getCurrentProgram()."
                 ) from exc
 
-            self._program = program
+            self._register_open_program(program, open_program_cm=open_prog_cm)
 
             # Best-effort project discovery for logging; not strictly required
             try:
@@ -1657,88 +1670,51 @@ class PyGhidraClient(AbstractGhidraClient):
             except Exception:
                 discovered = []
 
-        # Decide which program to open
-        target_program = program_name
-        selected_path: Optional[str] = None
+        requested_programs = self._parse_requested_programs(program_name)
+        selected_paths = self._select_project_program_paths(discovered, requested_programs, project_path)
 
-        if target_program:
-            # If the user provided a project path (starts with "/"), use it
-            # directly; otherwise, treat it as a name and try to resolve it.
-            if target_program.startswith("/"):
-                if discovered and any(path == target_program for _, path in discovered):
-                    selected_path = target_program
-                else:
-                    # Let pyGhidra raise a precise error later if this path
-                    # doesn't exist.
-                    selected_path = target_program
-            else:
-                # Match by program name
-                for name, path in discovered:
-                    if name == target_program:
-                        selected_path = path
-                        break
-                if selected_path is None:
-                    pretty = ", ".join(f"{n} ({p})" for n, p in discovered) or "<none>"
-                    raise RuntimeError(
-                        f"PyGhidra could not find program named '{target_program}' in project. Available programs: {pretty}"
-                    )
-        else:
-            # No explicit program name: attempt auto-selection when exactly
-            # one program exists.
-            if len(discovered) == 1:
-                selected_path = discovered[0][1]
-                logger.info(
-                    "pyGhidra: auto-selected sole program '%s' at '%s' from project '%s'",
-                    discovered[0][0],
-                    selected_path,
-                    project_path,
-                )
-            elif len(discovered) > 1:
-                pretty = ", ".join(f"{n} ({p})" for n, p in discovered)
-                raise RuntimeError(
-                    "PyGhidra project contains multiple programs. "
-                    "Please specify config.ghidra.pyghidra_program or --pyghidra-program "
-                    "as a project path (e.g., '/MyProgram') or name. "
-                    f"Available programs: {pretty}"
-                )
-            else:
-                raise RuntimeError(
-                    "PyGhidra project appears to contain no programs, or they could not be "
-                    "discovered automatically. Please import a program into the project."
-                )
+        if not requested_programs and len(selected_paths) == 1 and len(discovered) == 1:
+            logger.info(
+                "pyGhidra: auto-selected sole program '%s' at '%s' from project '%s'",
+                discovered[0][0],
+                selected_paths[0],
+                project_path,
+            )
+        elif not requested_programs and len(selected_paths) > 1:
+            logger.info(
+                "pyGhidra: no explicit program selection provided; opening all %d discovered programs from project '%s'",
+                len(selected_paths),
+                project_path,
+            )
 
-        # Open the selected program for long-lived use. Prefer
-        # pyghidra.consume_program() so the Program remains valid for the
-        # lifetime of this client.
-        if not selected_path:
-            raise RuntimeError("Internal error: no program path selected for pyGhidra backend.")
-
+        selected_path = "<unknown>"
         try:
-            if callable(consume_program):
-                # Preferred modern API: keep program alive with explicit
-                # consumer; caller is responsible for releasing when done.
-                program, consumer = consume_program(self._project, selected_path)
-                self._program = program
-                self._program_consumer = consumer
-            elif callable(program_context):
-                # Fallback: keep the context manager alive so the program
-                # isn't closed prematurely.
-                program_ctx = program_context(self._project, selected_path)
-                self._program_ctx = program_ctx
-                self._program = program_ctx.__enter__()
-            else:
-                # Legacy fallback: rely on project.open_program(path)
-                if hasattr(self._project, "open_program"):
-                    program_ctx = self._project.open_program(selected_path)
-                    self._program_ctx = program_ctx
-                    self._program = program_ctx.__enter__()
+            for selected_path in selected_paths:
+                if callable(consume_program):
+                    # Preferred modern API: keep programs alive with explicit
+                    # consumers; caller is responsible for releasing when done.
+                    program, consumer = consume_program(self._project, selected_path)
+                    self._register_open_program(program, selected_path=selected_path, consumer=consumer)
+                elif callable(program_context):
+                    # Fallback: keep the context manager alive so the program
+                    # isn't closed prematurely.
+                    program_ctx = program_context(self._project, selected_path)
+                    program = program_ctx.__enter__()
+                    self._register_open_program(program, selected_path=selected_path, program_ctx=program_ctx)
                 else:
-                    raise RuntimeError(
-                        "pyGhidra does not provide consume_program() or program_context(), "
-                        "and the project object has no open_program() method."
-                    )
+                    # Legacy fallback: rely on project.open_program(path)
+                    if hasattr(self._project, "open_program"):
+                        program_ctx = self._project.open_program(selected_path)
+                        program = program_ctx.__enter__()
+                        self._register_open_program(program, selected_path=selected_path, program_ctx=program_ctx)
+                    else:
+                        raise RuntimeError(
+                            "pyGhidra does not provide consume_program() or program_context(), "
+                            "and the project object has no open_program() method."
+                        )
 
         except Exception as exc:  # pragma: no cover - environment-specific
+            self.close()
             raise RuntimeError(
                 f"Failed to initialize pyGhidra program '{selected_path}' from project "
                 f"'{project_path}': {exc}. Please verify the program path/name and that "
@@ -1746,9 +1722,9 @@ class PyGhidraClient(AbstractGhidraClient):
             ) from exc
 
         logger.info(
-            "Initialized PyGhidraClient with project '%s', program '%s'",
+            "Initialized PyGhidraClient with project '%s', program(s) %s",
             project_path,
-            target_program,
+            ", ".join(selected_paths),
         )
 
     # ------------------------------------------------------------------
@@ -1762,12 +1738,13 @@ class PyGhidraClient(AbstractGhidraClient):
         and the decompiler can be initialized successfully.
         """
 
-        if self._program is None:
+        if not self._program_order:
             logger.error("pyGhidra health_check failed: no program is open")
             return False
 
         try:
-            self._program.getFunctionManager()
+            for _program_key, program, _info in self._iter_program_entries():
+                program.getFunctionManager()
             self._ensure_decompiler()
             return True
         except Exception as exc:  # pragma: no cover - environment-specific
@@ -1784,51 +1761,196 @@ class PyGhidraClient(AbstractGhidraClient):
         return self.health_check()
 
     def instances_list(self) -> str:
-        """Return the single in-process pyGhidra instance description."""
-        return self.instances_current()
+        """List open pyGhidra programs and indicate the active selection."""
+        self._refresh_program_instance_index()
+
+        if not self.active_instances:
+            return "No pyGhidra program is open"
+
+        result = ["=== Open pyGhidra Programs ==="]
+        for slot, info in self.active_instances.items():
+            status = "(CURRENT)" if slot == self.current_instance_port else ""
+            result.append(
+                f"• Program {slot}: {info.get('file', 'Unknown binary')} "
+                f"[{info.get('project', 'Unknown project')}] {status} -> {info.get('program_path', 'Unknown')}"
+            )
+
+        if len(self.active_instances) > 1:
+            result.append("\nUse 'instances_use(port=...)' to switch between open pyGhidra programs by number.")
+            result.append("Use '<program>::<function-or-address>' to target a specific program directly.")
+        return "\n".join(result)
 
     def instances_discover(self, host: str = "localhost", start_port: int = 8192, end_port: int = 8200) -> str:
-        """pyGhidra runs in-process and does not support HTTP instance discovery."""
-        return self.instances_current()
+        """pyGhidra runs in-process; discovery is equivalent to listing open programs."""
+        return self.instances_list()
 
     def instances_use(self, port: int) -> str:
-        """pyGhidra exposes a single in-process program rather than MCP instances."""
-        return f"Error: pyGhidra backend does not support switching between HTTP instances (requested port {port})."
+        """Switch the active pyGhidra program using its numbered slot."""
+        self._refresh_program_instance_index()
 
-    def instances_current(self) -> str:
-        """Describe the single active pyGhidra program."""
-        info = self.get_current_program_info()
-        if info.get("error"):
-            return info["error"]
+        try:
+            slot = int(port)
+        except ValueError:
+            return f"Error: Program selector must be an integer, got '{port}'"
 
-        return "\n".join(
-            [
-                "=== Current Instance: pyGhidra (in-process) ===",
-                f"Binary: {info.get('name', 'Unknown Binary')}",
-                f"Project: {info.get('project', 'Unknown Project')}",
-                f"Program Path: {info.get('program_path', 'Unknown')}",
-            ]
+        info = self.active_instances.get(slot)
+        if info is None:
+            if not self.active_instances:
+                return "Error: No pyGhidra program is open"
+            return (
+                f"Error: No open pyGhidra program found in slot {slot}. "
+                "Use 'instances_list()' to see available program numbers."
+            )
+
+        program_key = info.get("program_key")
+        if not program_key:
+            return f"Error: Internal pyGhidra state is missing the program key for slot {slot}"
+
+        self._set_active_program(program_key)
+        return (
+            f"Switched to pyGhidra program {slot} analyzing "
+            f"'{info.get('file', 'unknown')}' at {info.get('program_path', 'Unknown')}"
         )
 
+    def instances_current(self) -> str:
+        """Describe the currently active pyGhidra program."""
+        self._refresh_program_instance_index()
+
+        if not self._program_order or self.current_instance_port is None:
+            return "No pyGhidra program is open"
+
+        info = self.active_instances[self.current_instance_port]
+        lines = [
+            f"=== Current Instance: pyGhidra Program {self.current_instance_port} ===",
+            f"Binary: {info.get('file', 'Unknown Binary')}",
+            f"Project: {info.get('project', 'Unknown Project')}",
+            f"Program Path: {info.get('program_path', 'Unknown')}",
+        ]
+        if len(self.active_instances) > 1:
+            lines.append(f"Open Programs: {len(self.active_instances)}")
+            lines.append("Use 'instances_list()' to see all open programs.")
+        return "\n".join(lines)
+
     def get_current_program_info(self) -> Dict[str, str]:
-        """Return structured information about the currently opened program."""
-        if self._program is None:
+        """Return structured information about the currently active program."""
+        if not self._program_order:
             return {
                 "name": "Unknown Binary",
                 "project": "Unknown Project",
                 "program_path": "",
                 "error": "No pyGhidra program is open",
+                "backend": "pyghidra",
             }
 
+        self._refresh_program_instance_index()
+        primary_key = self._primary_program_key()
+        if primary_key is None:
+            return {
+                "name": "Unknown Binary",
+                "project": "Unknown Project",
+                "program_path": "",
+                "error": "No pyGhidra program is open",
+                "backend": "pyghidra",
+            }
+
+        info = self._get_program_info(primary_key)
+        info["backend"] = "pyghidra"
+        info["active_program"] = self._program_display_label(primary_key)
+        info["open_program_count"] = str(len(self._program_order))
+        if self.current_instance_port is not None:
+            info["program_slot"] = str(self.current_instance_port)
+        info["open_programs"] = ", ".join(
+            f"{index}. {self._program_display_label(key)} ({self._get_program_info(key).get('program_path', 'Unknown')})"
+            for index, key in enumerate(self._program_order, start=1)
+        )
+
+        return info
+
+    # _init_pyghidra_auto removed: pyGhidra backend now always operates on an
+    # explicitly specified project, and either an explicit program selection or
+    # all discovered project programs by default.
+
+    # ------------------------------------------------------------------
+    # Direct pyGhidra-backed public methods and internal helpers
+    # ------------------------------------------------------------------
+
+    def _parse_requested_programs(self, requested_programs: str | None) -> List[str]:
+        """Parse comma-separated project program selectors."""
+        if requested_programs is None:
+            return []
+
+        requested: List[str] = []
+        seen = set()
+        for raw_selector in requested_programs.split(","):
+            selector = raw_selector.strip()
+            if not selector or selector in seen:
+                continue
+            requested.append(selector)
+            seen.add(selector)
+        return requested
+
+    @staticmethod
+    def _format_available_programs(discovered: List[Tuple[str, str]]) -> str:
+        return ", ".join(f"{name} ({path})" for name, path in discovered) or "<none>"
+
+    def _select_project_program_paths(
+        self,
+        discovered: List[Tuple[str, str]],
+        requested_programs: List[str],
+        project_path: str,
+    ) -> List[str]:
+        """Resolve requested project program selectors to concrete project paths."""
+        if not requested_programs:
+            if discovered:
+                return [path for _name, path in discovered]
+            raise RuntimeError(
+                "PyGhidra project appears to contain no programs, or they could not be "
+                "discovered automatically. Please import a program into the project."
+            )
+
+        selected_paths: List[str] = []
+        seen = set()
+        pretty = self._format_available_programs(discovered)
+
+        for requested_program in requested_programs:
+            if requested_program.startswith("/"):
+                if discovered and not any(path == requested_program for _, path in discovered):
+                    raise RuntimeError(
+                        f"PyGhidra could not find program path '{requested_program}' in project "
+                        f"'{project_path}'. Available programs: {pretty}"
+                    )
+                resolved_path = requested_program
+            else:
+                matches = [path for name, path in discovered if name == requested_program]
+                if len(matches) == 1:
+                    resolved_path = matches[0]
+                elif len(matches) > 1:
+                    raise RuntimeError(
+                        f"PyGhidra found multiple programs named '{requested_program}' in project "
+                        f"'{project_path}'. Please use full project paths via --pyghidra-program. "
+                        f"Matching paths: {', '.join(matches)}"
+                    )
+                else:
+                    raise RuntimeError(
+                        f"PyGhidra could not find program named '{requested_program}' in project "
+                        f"'{project_path}'. Available programs: {pretty}"
+                    )
+
+            if resolved_path not in seen:
+                selected_paths.append(resolved_path)
+                seen.add(resolved_path)
+
+        return selected_paths
+
+    def _extract_program_info(self, program, *, selected_path: str | None = None) -> Dict[str, str]:
         info = {
             "name": "Unknown Binary",
             "project": "Unknown Project",
-            "program_path": "",
-            "backend": "pyghidra",
+            "program_path": selected_path or "",
         }
 
         try:
-            domain_file = self._program.getDomainFile()
+            domain_file = program.getDomainFile()
             if domain_file is not None:
                 try:
                     info["name"] = str(domain_file.getName())
@@ -1849,7 +1971,7 @@ class PyGhidraClient(AbstractGhidraClient):
 
         try:
             if info["name"] == "Unknown Binary":
-                info["name"] = str(self._program.getName())
+                info["name"] = str(program.getName())
         except Exception:
             pass
 
@@ -1862,19 +1984,349 @@ class PyGhidraClient(AbstractGhidraClient):
 
         return info
 
-    # _init_pyghidra_auto removed: pyGhidra backend now always operates on an
-    # explicitly specified project, and either an explicit program name or a
-    # single auto-selected program when only one exists.
+    def _register_open_program(
+        self,
+        program,
+        *,
+        selected_path: str | None = None,
+        consumer=None,
+        program_ctx=None,
+        open_program_cm=None,
+    ) -> str:
+        info = self._extract_program_info(program, selected_path=selected_path)
+        base_key = info.get("program_path") or info.get("name") or f"program_{len(self._program_order) + 1}"
+        program_key = base_key
+        suffix = 2
+        while program_key in self._programs_by_key and self._programs_by_key[program_key] is not program:
+            program_key = f"{base_key}#{suffix}"
+            suffix += 1
 
-    # ------------------------------------------------------------------
-    # Direct pyGhidra-backed public methods and internal helpers
-    # ------------------------------------------------------------------
+        self._programs_by_key[program_key] = program
+        self._program_info_by_key[program_key] = info
+        if program_key not in self._program_order:
+            self._program_order.append(program_key)
 
-    def _require_program(self):
-        """Return the current program or raise a stable backend error."""
+        if consumer is not None:
+            self._program_consumers.append((program, consumer))
+            if self._program_consumer is None:
+                self._program_consumer = consumer
+
+        if program_ctx is not None:
+            self._program_contexts.append(program_ctx)
+            if self._program_ctx is None:
+                self._program_ctx = program_ctx
+
+        if open_program_cm is not None:
+            self._open_program_cms.append(open_program_cm)
+            if self._open_program_cm is None:
+                self._open_program_cm = open_program_cm
+
+        if self._current_program_key is None:
+            self._current_program_key = program_key
         if self._program is None:
-            raise RuntimeError("pyGhidra program is not initialized")
-        return self._program
+            self._program = program
+        self._refresh_program_instance_index()
+
+        return program_key
+
+    def _program_index_for_key(self, program_key: str) -> Optional[int]:
+        if program_key not in self._program_order:
+            return None
+        return self._program_order.index(program_key) + 1
+
+    def _refresh_program_instance_index(self) -> None:
+        self.active_instances = {}
+
+        for slot, program_key in enumerate(self._program_order, start=1):
+            info = self._get_program_info(program_key)
+            self.active_instances[slot] = {
+                "program_key": program_key,
+                "file": info.get("name", "Unknown Binary"),
+                "project": info.get("project", "Unknown Project"),
+                "program_path": info.get("program_path", ""),
+                "backend": "pyghidra",
+            }
+
+        if not self._program_order:
+            self._current_program_key = None
+            self.current_instance_port = None
+            self.default_port = None
+            self._program = None
+            return
+
+        if self._current_program_key not in self._programs_by_key:
+            self._current_program_key = self._program_order[0]
+
+        self.default_port = 1
+        self.current_instance_port = self._program_index_for_key(self._current_program_key)
+        if self._current_program_key is not None:
+            self._program = self._programs_by_key.get(self._current_program_key)
+
+    def _set_active_program(self, program_key: str) -> None:
+        program = self._require_program(program_key)
+        self._current_program_key = program_key
+        self._program = program
+        self._refresh_program_instance_index()
+
+    def _primary_program_key(self) -> Optional[str]:
+        if self._current_program_key in self._programs_by_key:
+            return self._current_program_key
+        if not self._program_order:
+            return None
+        return self._program_order[0]
+
+    def _get_program_info(self, program_key: str | None = None) -> Dict[str, str]:
+        if program_key is None:
+            program_key = self._primary_program_key()
+        if program_key is None:
+            return {
+                "name": "Unknown Binary",
+                "project": "Unknown Project",
+                "program_path": "",
+            }
+
+        info = self._program_info_by_key.get(program_key)
+        if info is not None:
+            return dict(info)
+
+        program = self._require_program(program_key)
+        info = self._extract_program_info(program)
+        self._program_info_by_key[program_key] = info
+        return dict(info)
+
+    def _iter_program_entries(self):
+        for program_key in self._program_order:
+            program = self._programs_by_key.get(program_key)
+            if program is None:
+                continue
+            yield program_key, program, self._get_program_info(program_key)
+
+    def _program_display_label(self, program_key: str) -> str:
+        info = self._get_program_info(program_key)
+        name = info.get("name") or "Unknown Binary"
+        path = info.get("program_path") or program_key
+        name_count = sum(1 for key in self._program_order if self._get_program_info(key).get("name") == name)
+        if name_count > 1 and path and path != name:
+            return f"{name} ({path})"
+        return name if name != "Unknown Binary" else path
+
+    def _program_selector_for_messages(self, program_key: str) -> str:
+        info = self._get_program_info(program_key)
+        return info.get("program_path") or info.get("name") or program_key
+
+    def _resolve_program_selector(self, selector: str) -> Optional[str]:
+        selector = selector.strip()
+        if not selector:
+            return None
+
+        selector_lower = selector.lower()
+        matches: List[str] = []
+        for program_key in self._program_order:
+            info = self._get_program_info(program_key)
+            candidates = {program_key.lower()}
+            if info.get("program_path"):
+                candidates.add(info["program_path"].lower())
+            if info.get("name"):
+                candidates.add(info["name"].lower())
+            if selector_lower in candidates:
+                matches.append(program_key)
+
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Program selector '{selector}' is ambiguous. Open programs: "
+                f"{', '.join(self._program_selector_for_messages(key) for key in matches)}"
+            )
+        return matches[0] if matches else None
+
+    def _split_program_qualified_identifier(self, value: str) -> Tuple[Optional[str], str]:
+        if not value or "::" not in value or len(self._program_order) <= 1:
+            return None, value
+
+        selector, remainder = value.split("::", 1)
+        program_key = self._resolve_program_selector(selector)
+        if program_key is None:
+            return None, value
+
+        remainder = remainder.strip()
+        if not remainder:
+            raise RuntimeError(f"Missing function or address after program selector '{selector.strip()}'.")
+        return program_key, remainder
+
+    def _resolve_function(self, identifier: str):
+        program_key, function_name = self._split_program_qualified_identifier(identifier)
+        function_name = function_name.strip()
+        if not function_name:
+            raise RuntimeError("Function name is required")
+
+        if program_key is not None:
+            program = self._require_program(program_key)
+            func = self._find_function_by_name(function_name, program=program)
+            if func is None:
+                raise RuntimeError(
+                    f"Function '{function_name}' not found in program '{self._program_display_label(program_key)}'"
+                )
+            return program_key, program, self._get_program_info(program_key), func, function_name
+
+        current_key = self._primary_program_key()
+        if current_key is not None:
+            current_program = self._require_program(current_key)
+            current_func = self._find_function_by_name(function_name, program=current_program)
+            if current_func is not None:
+                return current_key, current_program, self._get_program_info(current_key), current_func, function_name
+
+        matches = []
+        for key, program, info in self._iter_program_entries():
+            if key == current_key:
+                continue
+            func = self._find_function_by_name(function_name, program=program)
+            if func is not None:
+                matches.append((key, program, info, func, function_name))
+
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            raise RuntimeError(f"Function '{function_name}' not found")
+
+        candidates = ", ".join(
+            f"{self._program_selector_for_messages(key)}::{function_name}"
+            for key, _program, _info, _func, _name in matches
+        )
+        raise RuntimeError(
+            f"Function '{function_name}' exists in multiple open programs. "
+            f"Qualify it as '<program>::{function_name}'. Candidates: {candidates}"
+        )
+
+    def _program_contains_address(self, program, addr) -> bool:
+        mem = program.getMemory()
+        if hasattr(mem, "contains"):
+            return bool(mem.contains(addr))
+        if hasattr(mem, "getBlock"):
+            return mem.getBlock(addr) is not None
+        return True
+
+    def _resolve_program_address(self, identifier: str, *, function_lookup: str | None = None):
+        program_key, raw_identifier = self._split_program_qualified_identifier(identifier)
+        norm_addr = self._normalize_addr(raw_identifier)
+        if not norm_addr:
+            raise RuntimeError("Address parameter is required")
+
+        if program_key is not None:
+            program = self._require_program(program_key)
+            addr = self._address_from_hex(norm_addr, program=program)
+            return program_key, program, self._get_program_info(program_key), addr, norm_addr
+
+        primary_program_key = self._primary_program_key()
+        if primary_program_key is not None:
+            program = self._require_program(primary_program_key)
+            addr = self._address_from_hex(norm_addr, program=program)
+            matches_current = False
+            if function_lookup == "at":
+                matches_current = program.getFunctionManager().getFunctionAt(addr) is not None
+            elif function_lookup == "containing":
+                matches_current = self._get_function_for_address(addr, program=program) is not None
+            else:
+                matches_current = self._program_contains_address(program, addr)
+
+            if matches_current:
+                return primary_program_key, program, self._get_program_info(primary_program_key), addr, norm_addr
+
+        candidates = []
+        for key, program, info in self._iter_program_entries():
+            if key == primary_program_key:
+                continue
+            try:
+                addr = self._address_from_hex(norm_addr, program=program)
+                if function_lookup == "at":
+                    if program.getFunctionManager().getFunctionAt(addr) is None:
+                        continue
+                elif function_lookup == "containing":
+                    if self._get_function_for_address(addr, program=program) is None:
+                        continue
+                elif not self._program_contains_address(program, addr):
+                    continue
+                candidates.append((key, program, info, addr, norm_addr))
+            except Exception:
+                continue
+
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            raise RuntimeError(
+                f"Address '{raw_identifier.strip()}' could not be resolved in any open program. "
+                "Use '<program>::<address>' to target a specific binary."
+            )
+
+        candidate_text = ", ".join(
+            f"{self._program_selector_for_messages(key)}::{norm_addr}"
+            for key, _program, _info, _addr, _norm in candidates
+        )
+        raise RuntimeError(
+            f"Address '{raw_identifier.strip()}' is ambiguous across multiple open programs. "
+            f"Qualify it as '<program>::{norm_addr}'. Candidates: {candidate_text}"
+        )
+
+    def _collect_program_lines(self, collector) -> List[str]:
+        lines: List[str] = []
+        multi_program = len(self._program_order) > 1
+
+        for program_key, program, _info in self._iter_program_entries():
+            program_lines = collector(program_key, program) or []
+            if not multi_program:
+                lines.extend(program_lines)
+                continue
+
+            label = self._program_display_label(program_key)
+            lines.extend(f"[{label}] {line}" for line in program_lines)
+
+        return lines
+
+    def _format_program_status(self, message: str, program_key: str) -> str:
+        if len(self._program_order) <= 1:
+            return message
+        return f"[{self._program_display_label(program_key)}] {message}"
+
+    def _find_symbol_address(self, name: str, program):
+        symbol_table = program.getSymbolTable()
+        func = self._find_function_by_name(name, program=program)
+        if func is not None:
+            return func.getEntryPoint(), "function"
+
+        for sym in symbol_table.getExternalSymbols():
+            try:
+                if sym.getName() == name:
+                    return sym.getAddress(), "external"
+            except Exception:
+                continue
+
+        try:
+            syms = symbol_table.getSymbols(name, None)
+        except TypeError:
+            syms = symbol_table.getSymbols(name)
+
+        for sym in syms:
+            try:
+                return sym.getAddress(), sym.getSymbolType().toString().lower()
+            except Exception:
+                continue
+
+        return None, ""
+
+    def _require_program(self, program_key: str | None = None):
+        """Return the default or selected program or raise a stable backend error."""
+        if program_key is None:
+            active_program_key = self._primary_program_key()
+            if active_program_key is None:
+                raise RuntimeError("pyGhidra program is not initialized")
+            program = self._programs_by_key.get(active_program_key)
+            if program is None:
+                raise RuntimeError("pyGhidra program is not initialized")
+            self._program = program
+            return program
+
+        program = self._programs_by_key.get(program_key)
+        if program is None:
+            raise RuntimeError(f"pyGhidra program '{program_key}' is not initialized")
+        return program
 
     def _operation_error(self, operation: str, exc: Exception) -> str:
         """Format backend errors to match the previous pyGhidra surface."""
@@ -1886,9 +2338,9 @@ class PyGhidraClient(AbstractGhidraClient):
     def _operation_error_lines(self, operation: str, exc: Exception) -> List[str]:
         return [self._operation_error(operation, exc)]
 
-    def _address_from_hex(self, addr_str: str):
+    def _address_from_hex(self, addr_str: str, *, program=None):
         """Convert a hex string (with or without 0x) to a Ghidra Address."""
-        program = self._require_program()
+        program = self._require_program() if program is None else program
         af = program.getAddressFactory()
         s = addr_str.strip()
         if s.lower().startswith("0x"):
@@ -1896,18 +2348,18 @@ class PyGhidraClient(AbstractGhidraClient):
         space = af.getDefaultAddressSpace()
         return space.getAddress(int(s, 16))
 
-    def _get_function_for_address(self, addr):
+    def _get_function_for_address(self, addr, *, program=None):
         """Return the function at or containing the given address."""
-        program = self._require_program()
+        program = self._require_program() if program is None else program
         func_mgr = program.getFunctionManager()
         func = func_mgr.getFunctionAt(addr)
         if func is None:
             func = func_mgr.getFunctionContaining(addr)
         return func
 
-    def _find_function_by_name(self, name: str):
+    def _find_function_by_name(self, name: str, *, program=None):
         """Best-effort lookup of a Function by name."""
-        program = self._require_program()
+        program = self._require_program() if program is None else program
         func_mgr = program.getFunctionManager()
         st = program.getSymbolTable()
 
@@ -1935,7 +2387,7 @@ class PyGhidraClient(AbstractGhidraClient):
         m = re.search(r"([0-9a-fA-F]{6,})", name)
         if m:
             try:
-                addr = self._address_from_hex(m.group(1))
+                addr = self._address_from_hex(m.group(1), program=program)
                 func = func_mgr.getFunctionAt(addr)
                 if func is not None:
                     return func
@@ -1944,11 +2396,33 @@ class PyGhidraClient(AbstractGhidraClient):
 
         return None
 
-    def _ensure_decompiler(self):
-        """Lazily initialize the Ghidra decompiler interface."""
-        if self._decomp is not None:
+    def _ensure_decompiler(self, *, program=None, program_key: str | None = None):
+        """Lazily initialize or switch the Ghidra decompiler interface."""
+        if program is None:
+            if program_key is not None:
+                program = self._require_program(program_key)
+            else:
+                program = self._require_program()
+                program_key = self._primary_program_key()
+
+        if program_key is None:
+            for candidate_key, candidate_program in self._programs_by_key.items():
+                if candidate_program is program:
+                    program_key = candidate_key
+                    break
+
+        if self._decomp is not None and self._decomp_program_key == program_key:
             return self._decomp
-        program = self._require_program()
+
+        if self._decomp is not None:
+            try:
+                self._decomp.dispose()
+            except Exception:
+                logger.exception("Error disposing pyGhidra decompiler interface while switching programs")
+            finally:
+                self._decomp = None
+                self._decomp_monitor = None
+                self._decomp_program_key = None
 
         try:
             from ghidra.app.decompiler import DecompInterface  # type: ignore[import]
@@ -1958,14 +2432,14 @@ class PyGhidraClient(AbstractGhidraClient):
 
         decomp = DecompInterface()
         decomp.openProgram(program)
-        # Store monitor on instance so we can reuse it
         self._decomp_monitor = ConsoleTaskMonitor()
         self._decomp = decomp
+        self._decomp_program_key = program_key
         return decomp
 
-    def _run_program_transaction(self, description: str, action) -> None:
+    def _run_program_transaction(self, description: str, action, *, program=None) -> None:
         """Run a program mutation under pyGhidra transaction support when available."""
-        program = self._require_program()
+        program = self._require_program() if program is None else program
         tx = getattr(self._pyghidra, "transaction", None)
         tm_fn = getattr(self._pyghidra, "task_monitor", None)
 
@@ -1983,24 +2457,24 @@ class PyGhidraClient(AbstractGhidraClient):
         action()
 
     def _list_function_lines(self, *, offset: int, limit: int, include_addresses: bool) -> List[str]:
-        program = self._require_program()
-        func_mgr = program.getFunctionManager()
-        funcs_iter = func_mgr.getFunctions(True)
+        def _collect(_program_key, program):
+            func_mgr = program.getFunctionManager()
+            funcs_iter = func_mgr.getFunctions(True)
+            lines: List[str] = []
+            for func in funcs_iter:
+                try:
+                    name = str(func.getName())
+                    if include_addresses:
+                        entry = func.getEntryPoint()
+                        addr_text = str(entry) if entry is not None else "0"
+                        lines.append(f"{name} at {addr_text}")
+                    else:
+                        lines.append(name)
+                except Exception:
+                    continue
+            return lines
 
-        lines: List[str] = []
-        for func in funcs_iter:
-            try:
-                name = str(func.getName())
-                if include_addresses:
-                    entry = func.getEntryPoint()
-                    addr_text = str(entry) if entry is not None else "0"
-                    lines.append(f"{name} at {addr_text}")
-                else:
-                    lines.append(name)
-            except Exception:
-                continue
-
-        return self._render_paginated_lines(lines, offset, limit)
+        return self._render_paginated_lines(self._collect_program_lines(_collect), offset, limit)
 
     def _warn_slow_string_path(self, message: str, exc: Exception | None = None) -> None:
         """Emit a one-time error when list_strings() must use the slow path."""
@@ -2087,15 +2561,13 @@ class PyGhidraClient(AbstractGhidraClient):
     def decompile_function(self, name: str, offset: int = 0, limit: int = 500) -> str:
         try:
             offset, limit = self._get_offset_limit(offset, limit, default_limit=500)
-            func = self._find_function_by_name(name)
-            if func is None:
-                return f"Error: function '{name}' not found"
+            program_key, program, _info, func, function_name = self._resolve_function(name)
 
-            decomp = self._ensure_decompiler()
+            decomp = self._ensure_decompiler(program=program, program_key=program_key)
             results = decomp.decompileFunction(func, 60, self._decomp_monitor)
             df = results.getDecompiledFunction()
             if df is None:
-                return f"Error: Decompilation failed for function '{name}'"
+                return f"Error: Decompilation failed for function '{function_name}'"
             return self._render_paginated_text(df.getC(), offset, limit)
         except Exception as exc:
             return self._operation_error("decompile_function(name)", exc)
@@ -2107,25 +2579,15 @@ class PyGhidraClient(AbstractGhidraClient):
         try:
             from ghidra.program.model.symbol import SourceType  # type: ignore[import]
 
-            program = self._require_program()
-            st = program.getSymbolTable()
-            func_mgr = program.getFunctionManager()
-            syms = st.getSymbols(old_name, None)
-            target_func = None
-            for sym in syms:
-                try:
-                    if sym.getSymbolType().toString() == "FUNCTION":
-                        target_func = func_mgr.getFunctionAt(sym.getAddress())
-                        break
-                except Exception:
-                    continue
+            program_key, program, _info, target_func, function_name = self._resolve_function(old_name)
 
-            if target_func is None:
-                return f"Error: function '{old_name}' not found"
-
-            desc = f"rename_function: {old_name} -> {new_name}"
-            self._run_program_transaction(desc, lambda: target_func.setName(new_name, SourceType.USER_DEFINED))
-            return f"Renamed function '{old_name}' to '{new_name}'"
+            desc = f"rename_function: {function_name} -> {new_name}"
+            self._run_program_transaction(
+                desc,
+                lambda: target_func.setName(new_name, SourceType.USER_DEFINED),
+                program=program,
+            )
+            return self._format_program_status(f"Renamed function '{function_name}' to '{new_name}'", program_key)
         except Exception as exc:
             return self._operation_error("renameFunction", exc)
 
@@ -2136,8 +2598,7 @@ class PyGhidraClient(AbstractGhidraClient):
         try:
             from ghidra.program.model.symbol import SourceType  # type: ignore[import]
 
-            program = self._require_program()
-            addr = self._address_from_hex(str(address))
+            program_key, program, _info, addr, norm_addr = self._resolve_program_address(address)
             st = program.getSymbolTable()
 
             def action() -> None:
@@ -2147,9 +2608,9 @@ class PyGhidraClient(AbstractGhidraClient):
                 else:
                     st.createLabel(addr, new_name, None, SourceType.USER_DEFINED)
 
-            desc = f"rename_data: {address} -> {new_name}"
-            self._run_program_transaction(desc, action)
-            return f"Renamed data at {address} to '{new_name}'"
+            desc = f"rename_data: {norm_addr} -> {new_name}"
+            self._run_program_transaction(desc, action, program=program)
+            return self._format_program_status(f"Renamed data at {norm_addr} to '{new_name}'", program_key)
         except Exception as exc:
             return self._operation_error("renameData", exc)
 
@@ -2166,18 +2627,20 @@ class PyGhidraClient(AbstractGhidraClient):
                 )
                 limit = self.MAX_SAFE_LIMIT
 
-            program = self._require_program()
-            mem = program.getMemory()
-            lines: List[str] = []
-            for blk in mem.getBlocks():
-                try:
-                    name = blk.getName()
-                    start = blk.getStart().getOffset()
-                    end = blk.getEnd().getOffset()
-                    lines.append(f"{name}: {start:x} - {end:x}")
-                except Exception:
-                    continue
-            return self._render_paginated_lines(lines, offset, limit)
+            def _collect(_program_key, program):
+                mem = program.getMemory()
+                lines: List[str] = []
+                for blk in mem.getBlocks():
+                    try:
+                        name = blk.getName()
+                        start = blk.getStart().getOffset()
+                        end = blk.getEnd().getOffset()
+                        lines.append(f"{name}: {start:x} - {end:x}")
+                    except Exception:
+                        continue
+                return lines
+
+            return self._render_paginated_lines(self._collect_program_lines(_collect), offset, limit)
         except Exception as exc:
             return self._operation_error_lines("list_segments", exc)
 
@@ -2194,35 +2657,37 @@ class PyGhidraClient(AbstractGhidraClient):
                 )
                 limit = self.MAX_SAFE_LIMIT
 
-            program = self._require_program()
-            st = program.getSymbolTable()
-            ref_mgr = program.getReferenceManager()
-            func_mgr = program.getFunctionManager()
-            lines: List[str] = []
-            for sym in st.getExternalSymbols():
-                try:
-                    line = f"{sym.getName()} -> {sym.getAddress()}"
-                    callers: List[str] = []
-                    ref_count = 0
-                    for ref in ref_mgr.getReferencesTo(sym.getAddress()):
-                        ref_count += 1
-                        if ref_count <= 5:
-                            from_addr = ref.getFromAddress()
-                            caller = func_mgr.getFunctionContaining(from_addr)
-                            callers.append(str(caller.getName()) if caller is not None else str(from_addr))
+            def _collect(_program_key, program):
+                st = program.getSymbolTable()
+                ref_mgr = program.getReferenceManager()
+                func_mgr = program.getFunctionManager()
+                lines: List[str] = []
+                for sym in st.getExternalSymbols():
+                    try:
+                        line = f"{sym.getName()} -> {sym.getAddress()}"
+                        callers: List[str] = []
+                        ref_count = 0
+                        for ref in ref_mgr.getReferencesTo(sym.getAddress()):
+                            ref_count += 1
+                            if ref_count <= 5:
+                                from_addr = ref.getFromAddress()
+                                caller = func_mgr.getFunctionContaining(from_addr)
+                                callers.append(str(caller.getName()) if caller is not None else str(from_addr))
 
-                    if ref_count > 0:
-                        line += f" [Refs: {ref_count}]"
-                        if callers:
-                            line += f" [Callers: {', '.join(callers)}"
-                            if ref_count > 5:
-                                line += ", ..."
-                            line += "]"
+                        if ref_count > 0:
+                            line += f" [Refs: {ref_count}]"
+                            if callers:
+                                line += f" [Callers: {', '.join(callers)}"
+                                if ref_count > 5:
+                                    line += ", ..."
+                                line += "]"
 
-                    lines.append(line)
-                except Exception:
-                    continue
-            return self._render_paginated_lines(lines, offset, limit)
+                        lines.append(line)
+                    except Exception:
+                        continue
+                return lines
+
+            return self._render_paginated_lines(self._collect_program_lines(_collect), offset, limit)
         except Exception as exc:
             return self._operation_error_lines("list_imports", exc)
 
@@ -2239,44 +2704,46 @@ class PyGhidraClient(AbstractGhidraClient):
                 )
                 limit = self.MAX_SAFE_LIMIT
 
-            program = self._require_program()
-            st = program.getSymbolTable()
-            lines: List[str] = []
-            for sym in st.getAllSymbols(True):
-                try:
-                    if hasattr(sym, "isExternalEntryPoint") and sym.isExternalEntryPoint():
-                        lines.append(f"{sym.getName()} -> {sym.getAddress()}")
-                except Exception:
-                    continue
+            def _collect(_program_key, program):
+                st = program.getSymbolTable()
+                lines: List[str] = []
+                for sym in st.getAllSymbols(True):
+                    try:
+                        if hasattr(sym, "isExternalEntryPoint") and sym.isExternalEntryPoint():
+                            lines.append(f"{sym.getName()} -> {sym.getAddress()}")
+                    except Exception:
+                        continue
+                return lines
 
-            return self._render_paginated_lines(lines, offset, limit)
+            return self._render_paginated_lines(self._collect_program_lines(_collect), offset, limit)
         except Exception as exc:
             return self._operation_error_lines("list_exports", exc)
 
     def list_namespaces(self, offset: int = 0, limit: int = 100) -> List[str]:
         try:
             offset, limit = self._get_offset_limit(offset, limit)
-            program = self._require_program()
-            st = program.getSymbolTable()
-            names = set()
-            for sym in st.getAllSymbols(True):
-                try:
-                    namespace = sym.getParentNamespace()
-                    if namespace is None:
-                        continue
-
-                    is_global = False
+            def _collect(_program_key, program):
+                st = program.getSymbolTable()
+                names = set()
+                for sym in st.getAllSymbols(True):
                     try:
-                        is_global = bool(namespace.isGlobal())
+                        namespace = sym.getParentNamespace()
+                        if namespace is None:
+                            continue
+
+                        is_global = False
+                        try:
+                            is_global = bool(namespace.isGlobal())
+                        except Exception:
+                            is_global = str(namespace.getName()) == "Global"
+
+                        if not is_global:
+                            names.add(str(namespace.getName()))
                     except Exception:
-                        is_global = str(namespace.getName()) == "Global"
+                        continue
+                return sorted(names)
 
-                    if not is_global:
-                        names.add(str(namespace.getName()))
-                except Exception:
-                    continue
-
-            return self._render_paginated_lines(sorted(names), offset, limit)
+            return self._render_paginated_lines(self._collect_program_lines(_collect), offset, limit)
         except Exception as exc:
             return self._operation_error_lines("list_namespaces", exc)
 
@@ -2293,21 +2760,23 @@ class PyGhidraClient(AbstractGhidraClient):
                 )
                 limit = self.MAX_SAFE_LIMIT
 
-            program = self._require_program()
-            listing = program.getListing()
-            lines: List[str] = []
-            for data in listing.getDefinedData(True):
-                try:
-                    label = data.getLabel() if hasattr(data, "getLabel") else None
-                    value_repr = (
-                        data.getDefaultValueRepresentation()
-                        if hasattr(data, "getDefaultValueRepresentation")
-                        else str(data.getValue())
-                    )
-                    lines.append(f"{data.getAddress()}: {label or '(unnamed)'} = {value_repr}")
-                except Exception:
-                    continue
-            return self._render_paginated_lines(lines, offset, limit)
+            def _collect(_program_key, program):
+                listing = program.getListing()
+                lines: List[str] = []
+                for data in listing.getDefinedData(True):
+                    try:
+                        label = data.getLabel() if hasattr(data, "getLabel") else None
+                        value_repr = (
+                            data.getDefaultValueRepresentation()
+                            if hasattr(data, "getDefaultValueRepresentation")
+                            else str(data.getValue())
+                        )
+                        lines.append(f"{data.getAddress()}: {label or '(unnamed)'} = {value_repr}")
+                    except Exception:
+                        continue
+                return lines
+
+            return self._render_paginated_lines(self._collect_program_lines(_collect), offset, limit)
         except Exception as exc:
             return self._operation_error_lines("list_data_items", exc)
 
@@ -2324,25 +2793,27 @@ class PyGhidraClient(AbstractGhidraClient):
             limit = max_limit
 
         try:
-            program = self._require_program()
-            strings = []
-            data_iter = self._get_defined_string_iterator(program)
-            if data_iter is not None:
-                for entry in data_iter:
-                    value = entry.value
-                    if value is None:
-                        value = ""
-                    if filter and filter not in value:
-                        continue
-                    strings.append(f"{entry.minAddress}: {value}")
-            else:
-                for entry in self._iter_string_entries(program):
-                    value = self._string_entry_value(entry)
-                    if filter and filter not in value:
-                        continue
-                    addr = self._string_entry_address(entry)
-                    strings.append(f"{addr}: {value}")
-            return self._render_paginated_lines(strings, offset, limit)
+            def _collect(_program_key, program):
+                strings = []
+                data_iter = self._get_defined_string_iterator(program)
+                if data_iter is not None:
+                    for entry in data_iter:
+                        value = entry.value
+                        if value is None:
+                            value = ""
+                        if filter and filter not in value:
+                            continue
+                        strings.append(f"{entry.minAddress}: {value}")
+                else:
+                    for entry in self._iter_string_entries(program):
+                        value = self._string_entry_value(entry)
+                        if filter and filter not in value:
+                            continue
+                        addr = self._string_entry_address(entry)
+                        strings.append(f"{addr}: {value}")
+                return strings
+
+            return self._render_paginated_lines(self._collect_program_lines(_collect), offset, limit)
         except Exception as exc:
             return self._operation_error_lines("list_strings", exc)
 
@@ -2352,19 +2823,20 @@ class PyGhidraClient(AbstractGhidraClient):
 
         try:
             offset, limit = self._get_offset_limit(offset, limit)
-            program = self._require_program()
-            func_mgr = program.getFunctionManager()
-            matches: List[str] = []
-            for func in func_mgr.getFunctions(True):
-                try:
-                    name = str(func.getName())
-                    if query.lower() in name.lower():
-                        matches.append(f"{name} @ {func.getEntryPoint()}")
-                except Exception:
-                    continue
+            def _collect(_program_key, program):
+                func_mgr = program.getFunctionManager()
+                matches: List[str] = []
+                for func in func_mgr.getFunctions(True):
+                    try:
+                        name = str(func.getName())
+                        if query.lower() in name.lower():
+                            matches.append(f"{name} @ {func.getEntryPoint()}")
+                    except Exception:
+                        continue
+                matches.sort()
+                return matches
 
-            matches.sort()
-            return self._render_paginated_lines(matches, offset, limit)
+            return self._render_paginated_lines(self._collect_program_lines(_collect), offset, limit)
         except Exception as exc:
             return self._operation_error_lines("search_functions", exc)
 
@@ -2375,9 +2847,7 @@ class PyGhidraClient(AbstractGhidraClient):
         try:
             from ghidra.program.model.symbol import SourceType  # type: ignore[import]
 
-            func = self._find_function_by_name(function_name)
-            if func is None:
-                return f"Error: function '{function_name}' not found"
+            program_key, program, _info, func, resolved_function_name = self._resolve_function(function_name)
 
             try:
                 vars_iter = func.getAllVariables()
@@ -2394,11 +2864,18 @@ class PyGhidraClient(AbstractGhidraClient):
                     continue
 
             if target is None:
-                return f"Error: variable '{old_name}' not found in function '{function_name}'"
+                return f"Error: variable '{old_name}' not found in function '{resolved_function_name}'"
 
-            desc = f"rename_variable: {function_name}.{old_name} -> {new_name}"
-            self._run_program_transaction(desc, lambda: target.setName(new_name, SourceType.USER_DEFINED))
-            return f"Renamed variable '{old_name}' to '{new_name}' in function '{function_name}'"
+            desc = f"rename_variable: {resolved_function_name}.{old_name} -> {new_name}"
+            self._run_program_transaction(
+                desc,
+                lambda: target.setName(new_name, SourceType.USER_DEFINED),
+                program=program,
+            )
+            return self._format_program_status(
+                f"Renamed variable '{old_name}' to '{new_name}' in function '{resolved_function_name}'",
+                program_key,
+            )
         except Exception as exc:
             return self._operation_error("renameVariable", exc)
 
@@ -2407,8 +2884,7 @@ class PyGhidraClient(AbstractGhidraClient):
             return "Error: 'address' parameter is required for get_function_by_address"
 
         try:
-            program = self._require_program()
-            addr = self._address_from_hex(str(address))
+            _program_key, program, _info, addr, _norm_addr = self._resolve_program_address(address, function_lookup="at")
             func = program.getFunctionManager().getFunctionAt(addr)
             if func is None:
                 return f"Error: No function found at address {address}"
@@ -2460,12 +2936,15 @@ class PyGhidraClient(AbstractGhidraClient):
 
         try:
             offset, limit = self._get_offset_limit(offset, limit, default_limit=500)
-            addr = self._address_from_hex(str(address))
-            func = self._get_function_for_address(addr)
+            program_key, program, _info, addr, _norm_addr = self._resolve_program_address(
+                address,
+                function_lookup="containing",
+            )
+            func = self._get_function_for_address(addr, program=program)
             if func is None:
                 return f"Error: No function found at or containing address {address}"
 
-            decomp = self._ensure_decompiler()
+            decomp = self._ensure_decompiler(program=program, program_key=program_key)
             results = decomp.decompileFunction(func, 60, self._decomp_monitor)
             df = results.getDecompiledFunction()
             if df is None:
@@ -2479,9 +2958,11 @@ class PyGhidraClient(AbstractGhidraClient):
             return ["Error: 'address' parameter is required for disassemble_function"]
 
         try:
-            program = self._require_program()
-            addr = self._address_from_hex(str(address))
-            func = self._get_function_for_address(addr)
+            _program_key, program, _info, addr, _norm_addr = self._resolve_program_address(
+                address,
+                function_lookup="containing",
+            )
+            func = self._get_function_for_address(addr, program=program)
             if func is None:
                 return [f"Error: No function found at or containing address {address}"]
 
@@ -2507,16 +2988,19 @@ class PyGhidraClient(AbstractGhidraClient):
         try:
             from ghidra.program.model.listing import CodeUnit  # type: ignore[import]
 
-            program = self._require_program()
-            addr = self._address_from_hex(str(address))
+            program_key, program, _info, addr, norm_addr = self._resolve_program_address(address)
             listing = program.getListing()
             code_unit = listing.getCodeUnitAt(addr)
             if code_unit is None:
                 return f"Error: No code unit at address {address}"
 
-            desc = f"set_decompiler_comment at {address}"
-            self._run_program_transaction(desc, lambda: code_unit.setComment(CodeUnit.PRE_COMMENT, comment))
-            return f"Set decompiler comment at {address}"
+            desc = f"set_decompiler_comment at {norm_addr}"
+            self._run_program_transaction(
+                desc,
+                lambda: code_unit.setComment(CodeUnit.PRE_COMMENT, comment),
+                program=program,
+            )
+            return self._format_program_status(f"Set decompiler comment at {norm_addr}", program_key)
         except Exception as exc:
             return self._operation_error("set_decompiler_comment", exc)
 
@@ -2527,16 +3011,19 @@ class PyGhidraClient(AbstractGhidraClient):
         try:
             from ghidra.program.model.listing import CodeUnit  # type: ignore[import]
 
-            program = self._require_program()
-            addr = self._address_from_hex(str(address))
+            program_key, program, _info, addr, norm_addr = self._resolve_program_address(address)
             listing = program.getListing()
             code_unit = listing.getCodeUnitAt(addr)
             if code_unit is None:
                 return f"Error: No code unit at address {address}"
 
-            desc = f"set_disassembly_comment at {address}"
-            self._run_program_transaction(desc, lambda: code_unit.setComment(CodeUnit.EOL_COMMENT, comment))
-            return f"Set disassembly comment at {address}"
+            desc = f"set_disassembly_comment at {norm_addr}"
+            self._run_program_transaction(
+                desc,
+                lambda: code_unit.setComment(CodeUnit.EOL_COMMENT, comment),
+                program=program,
+            )
+            return self._format_program_status(f"Set disassembly comment at {norm_addr}", program_key)
         except Exception as exc:
             return self._operation_error("set_disassembly_comment", exc)
 
@@ -2547,14 +3034,21 @@ class PyGhidraClient(AbstractGhidraClient):
         try:
             from ghidra.program.model.symbol import SourceType  # type: ignore[import]
 
-            addr = self._address_from_hex(str(function_address))
-            func = self._get_function_for_address(addr)
+            program_key, program, _info, addr, norm_addr = self._resolve_program_address(
+                function_address,
+                function_lookup="containing",
+            )
+            func = self._get_function_for_address(addr, program=program)
             if func is None:
                 return f"Error: No function found at or containing address {function_address}"
 
-            desc = f"rename_function_by_address: {function_address} -> {new_name}"
-            self._run_program_transaction(desc, lambda: func.setName(new_name, SourceType.USER_DEFINED))
-            return f"Renamed function at {function_address} to '{new_name}'"
+            desc = f"rename_function_by_address: {norm_addr} -> {new_name}"
+            self._run_program_transaction(
+                desc,
+                lambda: func.setName(new_name, SourceType.USER_DEFINED),
+                program=program,
+            )
+            return self._format_program_status(f"Renamed function at {norm_addr} to '{new_name}'", program_key)
         except Exception as exc:
             return self._operation_error("rename_function_by_address", exc)
 
@@ -2563,21 +3057,27 @@ class PyGhidraClient(AbstractGhidraClient):
             return "Error: 'function_address' and 'prototype' are required for set_function_prototype"
 
         try:
-            program = self._require_program()
-            addr = self._address_from_hex(str(function_address))
-            func = self._get_function_for_address(addr)
+            program_key, program, _info, addr, norm_addr = self._resolve_program_address(
+                function_address,
+                function_lookup="containing",
+            )
+            func = self._get_function_for_address(addr, program=program)
             if func is None:
                 return f"Error: No function found at or containing address {function_address}"
 
-            desc = f"set_function_prototype at {function_address}"
+            desc = f"set_function_prototype at {norm_addr}"
             tx = getattr(self._pyghidra, "transaction", None)
 
             if hasattr(func, "setPrototypeString") and callable(tx):
                 self._run_program_transaction(
                     desc,
                     lambda: func.setPrototypeString(prototype),  # type: ignore[call-arg]
+                    program=program,
                 )
-                return f"Set prototype for function at {function_address} to '{prototype}'"
+                return self._format_program_status(
+                    f"Set prototype for function at {norm_addr} to '{prototype}'",
+                    program_key,
+                )
 
             try:
                 from ghidra.app.util.cparser.C import CParser  # type: ignore[import]
@@ -2599,8 +3099,11 @@ class PyGhidraClient(AbstractGhidraClient):
 
                 func.replaceParameters(params, FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS, True)
 
-            self._run_program_transaction(desc, action)
-            return f"Set prototype for function at {function_address} to '{prototype}'"
+            self._run_program_transaction(desc, action, program=program)
+            return self._format_program_status(
+                f"Set prototype for function at {norm_addr} to '{prototype}'",
+                program_key,
+            )
         except Exception as exc:
             return self._operation_error("set_function_prototype", exc)
 
@@ -2612,9 +3115,11 @@ class PyGhidraClient(AbstractGhidraClient):
             from ghidra.program.model.symbol import SourceType  # type: ignore[import]
             from ghidra.app.util.cparser.C import CParser  # type: ignore[import]
 
-            program = self._require_program()
-            addr = self._address_from_hex(str(function_address))
-            func = self._get_function_for_address(addr)
+            program_key, program, _info, addr, norm_addr = self._resolve_program_address(
+                function_address,
+                function_lookup="containing",
+            )
+            func = self._get_function_for_address(addr, program=program)
             if func is None:
                 return f"Error: No function found at or containing address {function_address}"
 
@@ -2645,24 +3150,27 @@ class PyGhidraClient(AbstractGhidraClient):
             if target is None:
                 return f"Error: variable '{variable_name}' not found in function at {function_address}"
 
-            desc = f"set_local_variable_type for {variable_name} at {function_address}"
+            desc = f"set_local_variable_type for {variable_name} at {norm_addr}"
             self._run_program_transaction(
                 desc,
                 lambda: target.setDataType(desired_dt, SourceType.USER_DEFINED),
+                program=program,
             )
-            return f"Set type of variable '{variable_name}' in function at {function_address} to '{new_type}'"
+            return self._format_program_status(
+                f"Set type of variable '{variable_name}' in function at {norm_addr} to '{new_type}'",
+                program_key,
+            )
         except Exception as exc:
             return self._operation_error("set_local_variable_type", exc)
 
     def get_xrefs_to(self, address: str, offset: int = 0, limit: int = 100):
-        norm_addr = self._normalize_addr(address)
-        if not norm_addr:
+        _program_key, raw_address = self._split_program_qualified_identifier(address)
+        if not self._normalize_addr(raw_address):
             return ["Error: 'address' parameter is required for xrefs_to"]
 
         try:
             offset, limit = self._get_offset_limit(offset, limit)
-            program = self._require_program()
-            addr = self._address_from_hex(norm_addr)
+            _program_key, program, _info, addr, _resolved_addr = self._resolve_program_address(address)
             ref_mgr = program.getReferenceManager()
             func_mgr = program.getFunctionManager()
             lines: List[str] = []
@@ -2680,14 +3188,13 @@ class PyGhidraClient(AbstractGhidraClient):
             return self._operation_error_lines("get_xrefs_to", exc)
 
     def get_xrefs_from(self, address: str, offset: int = 0, limit: int = 100):
-        norm_addr = self._normalize_addr(address)
-        if not norm_addr:
+        _program_key, raw_address = self._split_program_qualified_identifier(address)
+        if not self._normalize_addr(raw_address):
             return ["Error: 'address' parameter is required for xrefs_from"]
 
         try:
             offset, limit = self._get_offset_limit(offset, limit)
-            program = self._require_program()
-            addr = self._address_from_hex(norm_addr)
+            _program_key, program, _info, addr, _resolved_addr = self._resolve_program_address(address)
             ref_mgr = program.getReferenceManager()
             func_mgr = program.getFunctionManager()
             listing = program.getListing()
@@ -2716,51 +3223,46 @@ class PyGhidraClient(AbstractGhidraClient):
         if not name:
             return ["Error: 'name' parameter is required for function_xrefs"]
 
-        if name.upper().startswith("0X") or name[:3].upper() == "FUN" or name.isalnum() and len(name) >= 6:
-            addr = self._normalize_addr(name)
+        qualified_program_key, qualified_name = self._split_program_qualified_identifier(name)
+        if qualified_name.upper().startswith("0X") or qualified_name[:3].upper() == "FUN" or qualified_name.isalnum() and len(qualified_name) >= 6:
+            addr = self._normalize_addr(qualified_name)
+            if qualified_program_key is not None:
+                addr = f"{self._program_selector_for_messages(qualified_program_key)}::{addr}"
             return self.get_xrefs_to(addr, offset=offset, limit=limit)
 
         try:
             offset, limit = self._get_offset_limit(offset, limit)
-            program = self._require_program()
-            symbol_table = program.getSymbolTable()
-            ref_mgr = program.getReferenceManager()
-            func_mgr = program.getFunctionManager()
+            target_name = qualified_name.strip()
+            matches = []
 
-            target_address = None
-            target_type = "function"
+            if qualified_program_key is not None:
+                program = self._require_program(qualified_program_key)
+                target_address, target_type = self._find_symbol_address(target_name, program)
+                if target_address is None:
+                    return [f"Error: function or symbol '{target_name}' not found"]
+                matches.append((qualified_program_key, program, target_address, target_type))
+            else:
+                for program_key, program, _info in self._iter_program_entries():
+                    target_address, target_type = self._find_symbol_address(target_name, program)
+                    if target_address is not None:
+                        matches.append((program_key, program, target_address, target_type))
 
-            func = self._find_function_by_name(name)
-            if func is not None:
-                target_address = func.getEntryPoint()
-
-            if target_address is None:
-                for sym in symbol_table.getExternalSymbols():
-                    try:
-                        if sym.getName() == name:
-                            target_address = sym.getAddress()
-                            target_type = "external"
-                            break
-                    except Exception:
-                        continue
-
-            if target_address is None:
-                try:
-                    syms = symbol_table.getSymbols(name, None)
-                except TypeError:
-                    syms = symbol_table.getSymbols(name)
-                for sym in syms:
-                    try:
-                        target_address = sym.getAddress()
-                        target_type = sym.getSymbolType().toString().lower()
-                        break
-                    except Exception:
-                        continue
-
-            if target_address is None:
-                return [f"Error: function or symbol '{name}' not found"]
+                if not matches:
+                    return [f"Error: function or symbol '{target_name}' not found"]
+                if len(matches) > 1:
+                    candidates = ", ".join(
+                        f"{self._program_selector_for_messages(program_key)}::{target_name}"
+                        for program_key, _program, _target_address, _target_type in matches
+                    )
+                    return [
+                        f"Error: function or symbol '{target_name}' exists in multiple open programs. "
+                        f"Qualify it as '<program>::{target_name}'. Candidates: {candidates}"
+                    ]
 
             lines: List[str] = []
+            _program_key, program, target_address, _target_type = matches[0]
+            ref_mgr = program.getReferenceManager()
+            func_mgr = program.getFunctionManager()
             for ref in ref_mgr.getReferencesTo(target_address):
                 try:
                     from_addr = ref.getFromAddress()
@@ -2776,7 +3278,8 @@ class PyGhidraClient(AbstractGhidraClient):
             return self._operation_error_lines("get_function_xrefs", exc)
 
     def read_bytes(self, address: str, length: int = 16, format: str = "hex") -> str:
-        norm_addr = self._normalize_addr(address)
+        _program_key, raw_address = self._split_program_qualified_identifier(address)
+        norm_addr = self._normalize_addr(raw_address)
         if not norm_addr:
             return "Error: 'address' parameter is required for read_bytes"
 
@@ -2791,8 +3294,7 @@ class PyGhidraClient(AbstractGhidraClient):
         fmt = (format or "hex").lower()
 
         try:
-            program = self._require_program()
-            addr = self._address_from_hex(norm_addr)
+            _program_key, program, _info, addr, _resolved_addr = self._resolve_program_address(address)
             mem = program.getMemory()
             data = bytearray(length)
             bytes_read = mem.getBytes(addr, data)

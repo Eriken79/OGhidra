@@ -339,25 +339,32 @@ PyGhidra requires a valid Ghidra project in order to launch OGhidra.
 
 ---
 
-### Selecting a Program
+### Selecting Program(s)
 
-Specify which binary inside the Ghidra project should be analyzed:
+Specify which binary or binaries inside the Ghidra project should be analyzed:
 
 ```bash
 --pyghidra-program=<program_name>
 ```
 
-example call for selecting a program in a Ghidra project:
+You can also open multiple binaries from the same project by passing a comma-separated list of names or project paths:
 
 ```bash
-uv run main.py --ui --ghidra-backend=pyghidra --pyghidra-project=/path/to/project.gpr --pyghidra-program=<program_name>
+--pyghidra-program=<program1>,<program2>,</folder/program3>
+```
+
+example call for selecting programs in a Ghidra project:
+
+```bash
+uv run main.py --ui --ghidra-backend=pyghidra --pyghidra-project=/path/to/project.gpr --pyghidra-program=<program1>,<program2>,<program3>
 ```
 
 Requirements:
 
-- The program name must exactly match the name shown in the Ghidra project GUI
-- This option is required when using an existing project
-- Failure to specify a program will prevent OGhidra from launching
+- Each program name must exactly match the name shown in the Ghidra project GUI unless you use the full project path
+- If this option is omitted, OGhidra will open every program discovered in the project by default
+- If this option is provided, OGhidra will only open the specified programs
+- When multiple programs are open with pyGhidra, use `instances_list()` to see the numbered program slots and `instances_use(port=<slot>)` to switch the active binary
 
 ---
 
