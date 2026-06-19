@@ -8,6 +8,7 @@ import struct
 import base64
 import threading
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -16,6 +17,115 @@ import httpx
 from src.config import GhidraMCPConfig
 
 logger = logging.getLogger("ollama-ghidra-bridge.ghidra")
+
+
+@dataclass
+class _PyGhidraProgramEntry:
+    key: str
+    program: Any
+    name: str
+    project: str
+    program_path: str
+    consumer: Any = None
+    program_ctx: Any = None
+    open_program_cm: Any = None
+
+    @classmethod
+    def from_program(
+        cls,
+        program,
+        *,
+        selected_path: str | None = None,
+        project=None,
+        existing_keys: set[str] | None = None,
+        slot: int = 1,
+        consumer=None,
+        program_ctx=None,
+        open_program_cm=None,
+    ) -> "_PyGhidraProgramEntry":
+        info = {
+            "name": "Unknown Binary",
+            "project": "Unknown Project",
+            "program_path": selected_path or "",
+        }
+
+        try:
+            domain_file = program.getDomainFile()
+            if domain_file is not None:
+                try:
+                    info["name"] = str(domain_file.getName())
+                except Exception:
+                    pass
+                try:
+                    info["program_path"] = str(domain_file.getPathname())
+                except Exception:
+                    pass
+                try:
+                    domain_project = domain_file.getProject()
+                    if domain_project is not None:
+                        info["project"] = str(domain_project.getName())
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            if info["name"] == "Unknown Binary":
+                info["name"] = str(program.getName())
+        except Exception:
+            pass
+
+        if info["project"] == "Unknown Project":
+            try:
+                if project is not None and hasattr(project, "getName"):
+                    info["project"] = str(project.getName())
+            except Exception:
+                pass
+
+        base_key = info["program_path"] or info["name"] or f"program_{slot}"
+        key = base_key
+        suffix = 2
+        existing_keys = set() if existing_keys is None else existing_keys
+        while key in existing_keys:
+            key = f"{base_key}#{suffix}"
+            suffix += 1
+
+        return cls(
+            key=key,
+            program=program,
+            name=info["name"],
+            project=info["project"],
+            program_path=info["program_path"],
+            consumer=consumer,
+            program_ctx=program_ctx,
+            open_program_cm=open_program_cm,
+        )
+
+    def info(self) -> Dict[str, str]:
+        return {
+            "name": self.name,
+            "project": self.project,
+            "program_path": self.program_path,
+        }
+
+    def selector(self) -> str:
+        return self.program_path or self.name or self.key
+
+    def label(self, *, duplicate_name: bool = False) -> str:
+        name = self.name or "Unknown Binary"
+        path = self.program_path or self.key
+        if duplicate_name and path and path != name:
+            return f"{name} ({path})"
+        return name if name != "Unknown Binary" else path
+
+    def instance_info(self) -> Dict[str, str]:
+        return {
+            "program_key": self.key,
+            "file": self.name or "Unknown Binary",
+            "project": self.project or "Unknown Project",
+            "program_path": self.program_path,
+            "backend": "pyghidra",
+        }
 
 
 class AbstractGhidraClient(ABC):
@@ -1344,19 +1454,12 @@ class PyGhidraClient(AbstractGhidraClient):
         self._project = None
         self._program = None  # Primary/default program for compatibility
         self._current_program_key = None
-        self._programs_by_key: Dict[str, Any] = {}
-        self._program_info_by_key: Dict[str, Dict[str, str]] = {}
-        self._program_order: List[str] = []
-        self._program_contexts: List[Any] = []
-        self._program_consumers: List[Tuple[Any, Any]] = []
-        self._open_program_cms: List[Any] = []
+        self._program_entries: List[_PyGhidraProgramEntry] = []
+        self._program_entries_by_key: Dict[str, _PyGhidraProgramEntry] = {}
         self._decomp = None  # Lazy-initialized decompiler interface
         self._decomp_monitor = None
         self._decomp_program_key = None
         self._project_ctx = None
-        self._program_ctx = None
-        self._program_consumer = None
-        self._open_program_cm = None
         self._DefinedStringIterator = None
         self._defined_string_iterator_warning_emitted = False
         self._use_defined_string_iterator = True
@@ -1380,21 +1483,21 @@ class PyGhidraClient(AbstractGhidraClient):
                     self._decomp_program_key = None
                     self._decomp_monitor = None
 
-            for program, consumer in reversed(getattr(self, "_program_consumers", [])):
+            for entry in reversed(getattr(self, "_program_entries", [])):
+                if entry.consumer is None:
+                    continue
                 try:
-                    program.release(consumer)
+                    entry.program.release(entry.consumer)
                 except Exception:
                     logger.exception("Error releasing pyGhidra program consumer")
-            self._program_consumers = []
-            self._program_consumer = None  # type: ignore[attr-defined]
 
-            for program_ctx in reversed(getattr(self, "_program_contexts", [])):
+            for entry in reversed(getattr(self, "_program_entries", [])):
+                if entry.program_ctx is None:
+                    continue
                 try:
-                    program_ctx.__exit__(None, None, None)  # type: ignore[call-arg]
+                    entry.program_ctx.__exit__(None, None, None)  # type: ignore[call-arg]
                 except Exception:
                     logger.exception("Error closing pyGhidra program context")
-            self._program_contexts = []
-            self._program_ctx = None  # type: ignore[attr-defined]
 
             # Close the project context manager if we created one
             if getattr(self, "_project_ctx", None) is not None:
@@ -1405,18 +1508,17 @@ class PyGhidraClient(AbstractGhidraClient):
                 finally:
                     self._project_ctx = None  # type: ignore[attr-defined]
 
-            for open_program_cm in reversed(getattr(self, "_open_program_cms", [])):
+            for entry in reversed(getattr(self, "_program_entries", [])):
+                if entry.open_program_cm is None:
+                    continue
                 try:
-                    open_program_cm.__exit__(None, None, None)  # type: ignore[call-arg]
+                    entry.open_program_cm.__exit__(None, None, None)  # type: ignore[call-arg]
                 except Exception:
                     logger.exception("Error closing pyGhidra open_program context")
-            self._open_program_cms = []
-            self._open_program_cm = None  # type: ignore[attr-defined]
 
-            self._program_order = []
+            self._program_entries = []
             self._current_program_key = None
-            self._programs_by_key = {}
-            self._program_info_by_key = {}
+            self._program_entries_by_key = {}
             self.active_instances = {}
             self.current_instance_port = None
             self.default_port = None
@@ -1738,7 +1840,7 @@ class PyGhidraClient(AbstractGhidraClient):
         and the decompiler can be initialized successfully.
         """
 
-        if not self._program_order:
+        if not self._program_entries:
             logger.error("pyGhidra health_check failed: no program is open")
             return False
 
@@ -1816,7 +1918,7 @@ class PyGhidraClient(AbstractGhidraClient):
         """Describe the currently active pyGhidra program."""
         self._refresh_program_instance_index()
 
-        if not self._program_order or self.current_instance_port is None:
+        if not self._program_entries or self.current_instance_port is None:
             return "No pyGhidra program is open"
 
         info = self.active_instances[self.current_instance_port]
@@ -1833,7 +1935,7 @@ class PyGhidraClient(AbstractGhidraClient):
 
     def get_current_program_info(self) -> Dict[str, str]:
         """Return structured information about the currently active program."""
-        if not self._program_order:
+        if not self._program_entries:
             return {
                 "name": "Unknown Binary",
                 "project": "Unknown Project",
@@ -1843,8 +1945,8 @@ class PyGhidraClient(AbstractGhidraClient):
             }
 
         self._refresh_program_instance_index()
-        primary_key = self._primary_program_key()
-        if primary_key is None:
+        active_entry = self._active_program_entry()
+        if active_entry is None:
             return {
                 "name": "Unknown Binary",
                 "project": "Unknown Project",
@@ -1853,15 +1955,15 @@ class PyGhidraClient(AbstractGhidraClient):
                 "backend": "pyghidra",
             }
 
-        info = self._get_program_info(primary_key)
+        info = active_entry.info()
         info["backend"] = "pyghidra"
-        info["active_program"] = self._program_display_label(primary_key)
-        info["open_program_count"] = str(len(self._program_order))
+        info["active_program"] = self._program_label(active_entry.key)
+        info["open_program_count"] = str(len(self._program_entries))
         if self.current_instance_port is not None:
             info["program_slot"] = str(self.current_instance_port)
         info["open_programs"] = ", ".join(
-            f"{index}. {self._program_display_label(key)} ({self._get_program_info(key).get('program_path', 'Unknown')})"
-            for index, key in enumerate(self._program_order, start=1)
+            f"{index}. {self._program_label(entry.key)} ({entry.program_path or 'Unknown'})"
+            for index, entry in enumerate(self._program_entries, start=1)
         )
 
         return info
@@ -1942,48 +2044,6 @@ class PyGhidraClient(AbstractGhidraClient):
 
         return selected_paths
 
-    def _extract_program_info(self, program, *, selected_path: str | None = None) -> Dict[str, str]:
-        info = {
-            "name": "Unknown Binary",
-            "project": "Unknown Project",
-            "program_path": selected_path or "",
-        }
-
-        try:
-            domain_file = program.getDomainFile()
-            if domain_file is not None:
-                try:
-                    info["name"] = str(domain_file.getName())
-                except Exception:
-                    pass
-                try:
-                    info["program_path"] = str(domain_file.getPathname())
-                except Exception:
-                    pass
-                try:
-                    project = domain_file.getProject()
-                    if project is not None:
-                        info["project"] = str(project.getName())
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-        try:
-            if info["name"] == "Unknown Binary":
-                info["name"] = str(program.getName())
-        except Exception:
-            pass
-
-        if info["project"] == "Unknown Project":
-            try:
-                if self._project is not None and hasattr(self._project, "getName"):
-                    info["project"] = str(self._project.getName())
-            except Exception:
-                pass
-
-        return info
-
     def _register_open_program(
         self,
         program,
@@ -1993,126 +2053,92 @@ class PyGhidraClient(AbstractGhidraClient):
         program_ctx=None,
         open_program_cm=None,
     ) -> str:
-        info = self._extract_program_info(program, selected_path=selected_path)
-        base_key = info.get("program_path") or info.get("name") or f"program_{len(self._program_order) + 1}"
-        program_key = base_key
-        suffix = 2
-        while program_key in self._programs_by_key and self._programs_by_key[program_key] is not program:
-            program_key = f"{base_key}#{suffix}"
-            suffix += 1
+        for entry in self._program_entries:
+            if entry.program is program:
+                return entry.key
 
-        self._programs_by_key[program_key] = program
-        self._program_info_by_key[program_key] = info
-        if program_key not in self._program_order:
-            self._program_order.append(program_key)
-
-        if consumer is not None:
-            self._program_consumers.append((program, consumer))
-            if self._program_consumer is None:
-                self._program_consumer = consumer
-
-        if program_ctx is not None:
-            self._program_contexts.append(program_ctx)
-            if self._program_ctx is None:
-                self._program_ctx = program_ctx
-
-        if open_program_cm is not None:
-            self._open_program_cms.append(open_program_cm)
-            if self._open_program_cm is None:
-                self._open_program_cm = open_program_cm
+        entry = _PyGhidraProgramEntry.from_program(
+            program,
+            selected_path=selected_path,
+            project=self._project,
+            existing_keys=set(self._program_entries_by_key),
+            slot=len(self._program_entries) + 1,
+            consumer=consumer,
+            program_ctx=program_ctx,
+            open_program_cm=open_program_cm,
+        )
+        self._program_entries.append(entry)
+        self._program_entries_by_key[entry.key] = entry
 
         if self._current_program_key is None:
-            self._current_program_key = program_key
+            self._current_program_key = entry.key
         if self._program is None:
             self._program = program
         self._refresh_program_instance_index()
 
-        return program_key
+        return entry.key
 
-    def _program_index_for_key(self, program_key: str) -> Optional[int]:
-        if program_key not in self._program_order:
+    def _active_program_entry(self) -> Optional[_PyGhidraProgramEntry]:
+        if self._current_program_key is not None:
+            entry = self._program_entries_by_key.get(self._current_program_key)
+            if entry is not None:
+                return entry
+        if not self._program_entries:
             return None
-        return self._program_order.index(program_key) + 1
+        return self._program_entries[0]
+
+    def _program_entry(self, program_key: str | None = None) -> _PyGhidraProgramEntry:
+        if program_key is None:
+            entry = self._active_program_entry()
+            if entry is None:
+                raise RuntimeError("pyGhidra program is not initialized")
+            return entry
+
+        entry = self._program_entries_by_key.get(program_key)
+        if entry is None:
+            raise RuntimeError(f"pyGhidra program '{program_key}' is not initialized")
+        return entry
 
     def _refresh_program_instance_index(self) -> None:
         self.active_instances = {}
+        active_slot = None
 
-        for slot, program_key in enumerate(self._program_order, start=1):
-            info = self._get_program_info(program_key)
-            self.active_instances[slot] = {
-                "program_key": program_key,
-                "file": info.get("name", "Unknown Binary"),
-                "project": info.get("project", "Unknown Project"),
-                "program_path": info.get("program_path", ""),
-                "backend": "pyghidra",
-            }
+        for slot, entry in enumerate(self._program_entries, start=1):
+            self.active_instances[slot] = entry.instance_info()
+            if entry.key == self._current_program_key:
+                active_slot = slot
 
-        if not self._program_order:
+        if not self._program_entries:
             self._current_program_key = None
             self.current_instance_port = None
             self.default_port = None
             self._program = None
             return
 
-        if self._current_program_key not in self._programs_by_key:
-            self._current_program_key = self._program_order[0]
+        if active_slot is None:
+            first_entry = self._program_entries[0]
+            self._current_program_key = first_entry.key
+            self._program = first_entry.program
+            active_slot = 1
 
         self.default_port = 1
-        self.current_instance_port = self._program_index_for_key(self._current_program_key)
-        if self._current_program_key is not None:
-            self._program = self._programs_by_key.get(self._current_program_key)
+        self.current_instance_port = active_slot
+        self._program = self._program_entries[active_slot - 1].program
 
     def _set_active_program(self, program_key: str) -> None:
-        program = self._require_program(program_key)
-        self._current_program_key = program_key
-        self._program = program
+        entry = self._program_entry(program_key)
+        self._current_program_key = entry.key
+        self._program = entry.program
         self._refresh_program_instance_index()
 
-    def _primary_program_key(self) -> Optional[str]:
-        if self._current_program_key in self._programs_by_key:
-            return self._current_program_key
-        if not self._program_order:
-            return None
-        return self._program_order[0]
-
-    def _get_program_info(self, program_key: str | None = None) -> Dict[str, str]:
-        if program_key is None:
-            program_key = self._primary_program_key()
-        if program_key is None:
-            return {
-                "name": "Unknown Binary",
-                "project": "Unknown Project",
-                "program_path": "",
-            }
-
-        info = self._program_info_by_key.get(program_key)
-        if info is not None:
-            return dict(info)
-
-        program = self._require_program(program_key)
-        info = self._extract_program_info(program)
-        self._program_info_by_key[program_key] = info
-        return dict(info)
-
     def _iter_program_entries(self):
-        for program_key in self._program_order:
-            program = self._programs_by_key.get(program_key)
-            if program is None:
-                continue
-            yield program_key, program, self._get_program_info(program_key)
+        for entry in self._program_entries:
+            yield entry.key, entry.program, entry.info()
 
-    def _program_display_label(self, program_key: str) -> str:
-        info = self._get_program_info(program_key)
-        name = info.get("name") or "Unknown Binary"
-        path = info.get("program_path") or program_key
-        name_count = sum(1 for key in self._program_order if self._get_program_info(key).get("name") == name)
-        if name_count > 1 and path and path != name:
-            return f"{name} ({path})"
-        return name if name != "Unknown Binary" else path
-
-    def _program_selector_for_messages(self, program_key: str) -> str:
-        info = self._get_program_info(program_key)
-        return info.get("program_path") or info.get("name") or program_key
+    def _program_label(self, program_key: str) -> str:
+        entry = self._program_entry(program_key)
+        duplicate_name = sum(1 for candidate in self._program_entries if candidate.name == entry.name) > 1
+        return entry.label(duplicate_name=duplicate_name)
 
     def _resolve_program_selector(self, selector: str) -> Optional[str]:
         selector = selector.strip()
@@ -2121,25 +2147,24 @@ class PyGhidraClient(AbstractGhidraClient):
 
         selector_lower = selector.lower()
         matches: List[str] = []
-        for program_key in self._program_order:
-            info = self._get_program_info(program_key)
-            candidates = {program_key.lower()}
-            if info.get("program_path"):
-                candidates.add(info["program_path"].lower())
-            if info.get("name"):
-                candidates.add(info["name"].lower())
+        for entry in self._program_entries:
+            candidates = {entry.key.lower()}
+            if entry.program_path:
+                candidates.add(entry.program_path.lower())
+            if entry.name:
+                candidates.add(entry.name.lower())
             if selector_lower in candidates:
-                matches.append(program_key)
+                matches.append(entry.key)
 
         if len(matches) > 1:
             raise RuntimeError(
                 f"Program selector '{selector}' is ambiguous. Open programs: "
-                f"{', '.join(self._program_selector_for_messages(key) for key in matches)}"
+                f"{', '.join(self._program_entry(key).selector() for key in matches)}"
             )
         return matches[0] if matches else None
 
     def _split_program_qualified_identifier(self, value: str) -> Tuple[Optional[str], str]:
-        if not value or "::" not in value or len(self._program_order) <= 1:
+        if not value or "::" not in value or len(self._program_entries) <= 1:
             return None, value
 
         selector, remainder = value.split("::", 1)
@@ -2163,16 +2188,17 @@ class PyGhidraClient(AbstractGhidraClient):
             func = self._find_function_by_name(function_name, program=program)
             if func is None:
                 raise RuntimeError(
-                    f"Function '{function_name}' not found in program '{self._program_display_label(program_key)}'"
+                    f"Function '{function_name}' not found in program '{self._program_label(program_key)}'"
                 )
-            return program_key, program, self._get_program_info(program_key), func, function_name
+            return program_key, program, self._program_entry(program_key).info(), func, function_name
 
-        current_key = self._primary_program_key()
-        if current_key is not None:
-            current_program = self._require_program(current_key)
+        current_entry = self._active_program_entry()
+        current_key = current_entry.key if current_entry is not None else None
+        if current_entry is not None:
+            current_program = current_entry.program
             current_func = self._find_function_by_name(function_name, program=current_program)
             if current_func is not None:
-                return current_key, current_program, self._get_program_info(current_key), current_func, function_name
+                return current_key, current_program, current_entry.info(), current_func, function_name
 
         matches = []
         for key, program, info in self._iter_program_entries():
@@ -2188,7 +2214,7 @@ class PyGhidraClient(AbstractGhidraClient):
             raise RuntimeError(f"Function '{function_name}' not found")
 
         candidates = ", ".join(
-            f"{self._program_selector_for_messages(key)}::{function_name}"
+            f"{self._program_entry(key).selector()}::{function_name}"
             for key, _program, _info, _func, _name in matches
         )
         raise RuntimeError(
@@ -2213,11 +2239,12 @@ class PyGhidraClient(AbstractGhidraClient):
         if program_key is not None:
             program = self._require_program(program_key)
             addr = self._address_from_hex(norm_addr, program=program)
-            return program_key, program, self._get_program_info(program_key), addr, norm_addr
+            return program_key, program, self._program_entry(program_key).info(), addr, norm_addr
 
-        primary_program_key = self._primary_program_key()
-        if primary_program_key is not None:
-            program = self._require_program(primary_program_key)
+        primary_entry = self._active_program_entry()
+        primary_program_key = primary_entry.key if primary_entry is not None else None
+        if primary_entry is not None:
+            program = primary_entry.program
             addr = self._address_from_hex(norm_addr, program=program)
             matches_current = False
             if function_lookup == "at":
@@ -2228,7 +2255,7 @@ class PyGhidraClient(AbstractGhidraClient):
                 matches_current = self._program_contains_address(program, addr)
 
             if matches_current:
-                return primary_program_key, program, self._get_program_info(primary_program_key), addr, norm_addr
+                return primary_program_key, program, primary_entry.info(), addr, norm_addr
 
         candidates = []
         for key, program, info in self._iter_program_entries():
@@ -2257,7 +2284,7 @@ class PyGhidraClient(AbstractGhidraClient):
             )
 
         candidate_text = ", ".join(
-            f"{self._program_selector_for_messages(key)}::{norm_addr}"
+            f"{self._program_entry(key).selector()}::{norm_addr}"
             for key, _program, _info, _addr, _norm in candidates
         )
         raise RuntimeError(
@@ -2267,7 +2294,7 @@ class PyGhidraClient(AbstractGhidraClient):
 
     def _collect_program_lines(self, collector) -> List[str]:
         lines: List[str] = []
-        multi_program = len(self._program_order) > 1
+        multi_program = len(self._program_entries) > 1
 
         for program_key, program, _info in self._iter_program_entries():
             program_lines = collector(program_key, program) or []
@@ -2275,15 +2302,15 @@ class PyGhidraClient(AbstractGhidraClient):
                 lines.extend(program_lines)
                 continue
 
-            label = self._program_display_label(program_key)
+            label = self._program_label(program_key)
             lines.extend(f"[{label}] {line}" for line in program_lines)
 
         return lines
 
     def _format_program_status(self, message: str, program_key: str) -> str:
-        if len(self._program_order) <= 1:
+        if len(self._program_entries) <= 1:
             return message
-        return f"[{self._program_display_label(program_key)}] {message}"
+        return f"[{self._program_label(program_key)}] {message}"
 
     def _find_symbol_address(self, name: str, program):
         symbol_table = program.getSymbolTable()
@@ -2313,20 +2340,9 @@ class PyGhidraClient(AbstractGhidraClient):
 
     def _require_program(self, program_key: str | None = None):
         """Return the default or selected program or raise a stable backend error."""
-        if program_key is None:
-            active_program_key = self._primary_program_key()
-            if active_program_key is None:
-                raise RuntimeError("pyGhidra program is not initialized")
-            program = self._programs_by_key.get(active_program_key)
-            if program is None:
-                raise RuntimeError("pyGhidra program is not initialized")
-            self._program = program
-            return program
-
-        program = self._programs_by_key.get(program_key)
-        if program is None:
-            raise RuntimeError(f"pyGhidra program '{program_key}' is not initialized")
-        return program
+        entry = self._program_entry(program_key)
+        self._program = entry.program
+        return entry.program
 
     def _operation_error(self, operation: str, exc: Exception) -> str:
         """Format backend errors to match the previous pyGhidra surface."""
@@ -2402,13 +2418,14 @@ class PyGhidraClient(AbstractGhidraClient):
             if program_key is not None:
                 program = self._require_program(program_key)
             else:
-                program = self._require_program()
-                program_key = self._primary_program_key()
+                entry = self._program_entry()
+                program = entry.program
+                program_key = entry.key
 
         if program_key is None:
-            for candidate_key, candidate_program in self._programs_by_key.items():
-                if candidate_program is program:
-                    program_key = candidate_key
+            for entry in self._program_entries:
+                if entry.program is program:
+                    program_key = entry.key
                     break
 
         if self._decomp is not None and self._decomp_program_key == program_key:
@@ -3227,7 +3244,7 @@ class PyGhidraClient(AbstractGhidraClient):
         if qualified_name.upper().startswith("0X") or qualified_name[:3].upper() == "FUN" or qualified_name.isalnum() and len(qualified_name) >= 6:
             addr = self._normalize_addr(qualified_name)
             if qualified_program_key is not None:
-                addr = f"{self._program_selector_for_messages(qualified_program_key)}::{addr}"
+                addr = f"{self._program_entry(qualified_program_key).selector()}::{addr}"
             return self.get_xrefs_to(addr, offset=offset, limit=limit)
 
         try:
@@ -3251,7 +3268,7 @@ class PyGhidraClient(AbstractGhidraClient):
                     return [f"Error: function or symbol '{target_name}' not found"]
                 if len(matches) > 1:
                     candidates = ", ".join(
-                        f"{self._program_selector_for_messages(program_key)}::{target_name}"
+                        f"{self._program_entry(program_key).selector()}::{target_name}"
                         for program_key, _program, _target_address, _target_type in matches
                     )
                     return [
